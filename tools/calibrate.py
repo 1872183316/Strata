@@ -8,8 +8,13 @@ measured on (a Ryzen 5 7600 + RTX 5070 on PCIe 5):
                   per extra window row (more experts per window), so it wants a higher floor.
   --pool-workers  the CPU threads that compute experts.  Every physical core is not always best: on hybrid CPUs the
                   efficiency cores can make the whole window wait for them.
-The first two are measured through one engine (per-request `strata_tune` keys); the worker count needs a restart
-per value.  Decode speed only: the prompt path streams every expert whatever these settings say.
+  --adapt-every / --adapt-swaps / --adapt-decay
+                  how the VRAM expert tier follows the conversation: how often, how many experts it swaps in, how fast
+                  its use counts fade.  A PC whose CPU reads the missed experts slowly (DDR3, ~24 GB/s) gains from
+                  swapping more: 160 swaps every window measured +7.9% over the default tier on a Xeon E5-2673 v3 (DDR3) with an
+                  RTX 4060 Ti on PCIe 3.0 x8 (Q2_0; with the swaps taking effect a window later, #764).
+The first two are measured through one engine (per-request `strata_tune` keys); the worker count and the adaptive
+tier need a restart per value.  Decode speed only: the prompt path streams every expert whatever these settings say.
 
 A setting is kept only when it beats the default by more than MIN_GAIN in an interleaved re-measurement - the
 adaptive expert tier and the OS make single measurements noisy by a few percent.
@@ -32,6 +37,10 @@ sys.path.insert(0, str(ROOT))
 MIN_GAIN = 0.03                    # a setting must beat the default by this much to be kept
 PCIE_FRACS = (0.0, 0.2, 0.35, 0.55, 0.75)
 SPEC_MIN_PS = (0.3, 0.5, 0.7)
+# the adaptive tier's candidates (every, swaps, decay) against the engine's own (None): swapping more and remembering
+# longer, the rest of the set as the engine has it
+ADAPT_CANDIDATES = (None, ("1", "80", "0.97"), ("1", "160", "0.97"))
+ADAPT_FLAGS = ("--adapt-every", "--adapt-swaps", "--adapt-decay")
 MAX_NEW = 128
 PROMPTS = (
     "Write a Python function that merges two sorted lists into one sorted list, with a docstring and two tests.",
@@ -210,6 +219,31 @@ def measure(base_args: list[str], ids_list, start_engine, say=print) -> dict:
             base_rate = statistics.median(by_workers[w_best])
         elif by_workers.get(d_workers):
             base_rate = statistics.median(by_workers[d_workers])
+    # 5. the adaptive expert tier (a restart each), with everything chosen so far
+    tuned = apply(base_args, settings)
+    by_adapt = {}
+    for cand in ADAPT_CANDIDATES:
+        key = "default" if cand is None else "/".join(cand)
+        args = tuned
+        for flag, v in zip(ADAPT_FLAGS, cand or (None,) * len(ADAPT_FLAGS)):
+            args = with_arg(args, flag, v)
+        say(f"  Measuring the expert tier {'(the engine default)' if cand is None else 'every ' + cand[0] + ', ' + cand[1] + ' swaps, decay ' + cand[2]} (restarts the engine) ...")
+        e = start_engine(args)
+        try:
+            sa = Session(e, ids_list)
+            sa.warm_up(2)                                  # the tier needs some windows to follow the text
+            by_adapt[key] = [sa.rate(), sa.rate()]
+            say(f"    {statistics.median(by_adapt[key]):.1f} tok/s")
+        finally:
+            close(e)
+    a_best = pick(by_adapt, "default")
+    report["adapt"] = by_adapt
+    if a_best != "default":
+        for flag, v in zip(ADAPT_FLAGS, a_best.split("/")):
+            settings[flag] = v
+        base_rate = statistics.median(by_adapt[a_best])
+    elif by_adapt.get("default"):
+        base_rate = statistics.median(by_adapt["default"])
     report["seconds"] = round(time.time() - t0)
     report["tok_s"] = round(base_rate, 1) if base_rate else None
     return {"settings": settings, "report": report}
@@ -228,7 +262,8 @@ def close(eng):
         proc.kill()
 
 
-DEFAULTS = {"--pcie-frac": None, "--spec-min-p": "0.5", "--pool-workers": None}   # None: the engine's own choice
+DEFAULTS = {"--pcie-frac": None, "--spec-min-p": "0.5", "--pool-workers": None,   # None: the engine's own choice
+            "--adapt-every": None, "--adapt-swaps": None, "--adapt-decay": None}
 
 
 def apply(args: list[str], settings: dict) -> list[str]:

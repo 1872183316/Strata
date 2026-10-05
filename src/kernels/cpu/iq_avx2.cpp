@@ -375,9 +375,250 @@ void dot_rows(const uint8_t* w, size_t row_bytes, int n, const void* const* act,
     }
 }
 
+
+// ================================ IQ2_S and IQ3_S gate/up: the per-chunk scalar work once per block ================
+//
+// perf on a Xeon E5-2673 v3 (Haswell): the kernels above run ~3.5 instructions per cycle against an issue width of 4,
+// ~50 of them per 32 weights on IQ2_S, most of them scalar: each grid index assembled from qs and qh, each scale
+// broadcast.  The ones below do that work for a whole row first, in vectors (the grid indices, the sign bytes), then
+// run the token loop on loads; the integer sums are the same, so are the results bit for bit (STRATA_IQ256_LEGACY=1
+// is the A/B).  Measured on that CPU, 11 threads over experts in DRAM: IQ2_S 17.4 -> 22.5 GB/s at one token,
+// 12.1 -> 15.9 at four; IQ3_S 17.2 -> 22.6 and 12.0 -> 15.5.  IQ3_XXS gained nothing this way (its signs are
+// already table lookups), and keeps the kernel above.
+#if defined(_MSC_VER)
+#define STRATA_IQ_NOINLINE __declspec(noinline)
+#else
+#define STRATA_IQ_NOINLINE __attribute__((noinline))
+#endif
+const bool iq_legacy = [] { const char* v = std::getenv("STRATA_IQ256_LEGACY"); return v != nullptr && std::atoi(v) != 0; }();
+
+struct ScaleTab {  // scale byte -> int16 lanes 0-7 = 2*(b&15)+1, lanes 8-15 = 2*(b>>4)+1
+    int16_t v[256][16];
+    constexpr ScaleTab() : v{} {
+        for (int i = 0; i < 256; ++i)
+            for (int k = 0; k < 16; ++k) v[i][k] = (int16_t) (k < 8 ? 2 * (i & 15) + 1 : 2 * (i >> 4) + 1);
+    }
+};
+alignas(32) static constexpr ScaleTab scale_tab{};
+
+
+struct Sc32Tab {   // a 4-bit scale s -> sixteen int16 lanes of 2s + 1
+    int16_t v[16][16];
+    constexpr Sc32Tab() : v{} {
+        for (int s = 0; s < 16; ++s)
+            for (int k = 0; k < 16; ++k) v[s][k] = (int16_t) (2 * s + 1);
+    }
+};
+alignas(32) static constexpr Sc32Tab sc32_tab{};
+
+// ---- IQ2_S (22) with the per-chunk scalar work moved to one vector pass per 256-value block.
+// perf on a Xeon E5-2673 v3: the current kernel runs ~3.5 instructions per cycle (the issue width is 4) and ~50 of
+// them per 32 weights, most of them scalar index and scale arithmetic.  Here, per block: the 32 grid indices
+// (qs | 2 bits of qh << 8) in two vectors, the 256 sign bytes in eight, both stored to the stack whole and read back
+// whole; per 32 values: four index loads, four grid loads, one sign load, one scale-table load.
+// the per-block indices and signs of a whole row (at most 16 blocks), in a pass of their own: its constants are not
+// kept live through the token loop, which needs the registers for 2 x NT accumulators
+constexpr int kMaxBlocks = 16;
+struct Prep22 {
+    alignas(32) uint16_t idx[kMaxBlocks][32];
+    alignas(32) int8_t sg[kMaxBlocks][8][32];
+};
+
+STRATA_IQ_NOINLINE void prep_row_22(const uint8_t* row, int nblocks, Prep22& p) {
+    alignas(32) static const uint16_t kMul[16] = {256, 64, 16, 4, 256, 64, 16, 4, 256, 64, 16, 4, 256, 64, 16, 4};
+    alignas(32) static const int8_t kRep[32] = {0, -1, 0, -1, 0, -1, 0, -1, 1, -1, 1, -1, 1, -1, 1, -1,
+                                                2, -1, 2, -1, 2, -1, 2, -1, 3, -1, 3, -1, 3, -1, 3, -1};
+    alignas(32) static const uint8_t kSel[32] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128,
+                                                 1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+    alignas(32) static const int8_t kByte[32] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+                                                 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3};
+    const __m256i mul = _mm256_load_si256((const __m256i*) kMul);
+    const __m256i rep = _mm256_load_si256((const __m256i*) kRep);
+    const __m256i sel = _mm256_load_si256((const __m256i*) kSel);
+    const __m256i byt = _mm256_load_si256((const __m256i*) kByte);
+    const __m256i m300 = _mm256_set1_epi16(0x300), one8 = _mm256_set1_epi8(1);
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* b = row + (size_t) i * 82;
+        rows_ahead(b + prefetch_ahead);
+        for (int hlf = 0; hlf < 2; ++hlf) {   // entries 16h .. 16h+15 use qh[4h .. 4h+3]
+            const __m128i q4 = _mm_cvtsi32_si128((int) u32(b + 66 + 4 * hlf));
+            const __m256i qh = _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(q4), rep);
+            const __m256i hi = _mm256_and_si256(_mm256_mullo_epi16(qh, mul), m300);
+            const __m256i lo = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*) (b + 2 + 16 * hlf)));
+            _mm256_store_si256((__m256i*) (p.idx[i] + 16 * hlf), _mm256_or_si256(lo, hi));
+        }
+        for (int c = 0; c < 8; ++c) {          // chunk c's sign bits: qs[32 + 4c .. 32 + 4c + 3]
+            const __m256i bits = _mm256_shuffle_epi8(_mm256_set1_epi32((int) u32(b + 34 + 4 * c)), byt);
+            _mm256_store_si256((__m256i*) p.sg[i][c],
+                               _mm256_or_si256(_mm256_cmpeq_epi8(_mm256_and_si256(bits, sel), sel), one8));
+        }
+    }
+}
+
+template <int NT>
+inline void row_dot_v3_22(const uint8_t* row, int nblocks, const block_q8_K* const* y, float* res) {
+    alignas(32) Prep22 p;
+    prep_row_22(row, nblocks, p);
+    __m256 accf[NT];
+    for (int t = 0; t < NT; ++t) accf[t] = _mm256_setzero_ps();
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* b = row + (size_t) i * 82;
+        __m256i acci[NT];
+        for (int t = 0; t < NT; ++t) acci[t] = _mm256_setzero_si256();
+        for (int c = 0; c < 8; ++c) {
+            const uint16_t* ix = p.idx[i] + 4 * c;
+            const __m128i g01 = _mm_insert_epi64(_mm_cvtsi64_si128((long long) iq2s_grid[ix[0]]),
+                                                 (long long) iq2s_grid[ix[1]], 1);
+            const __m128i g23 = _mm_insert_epi64(_mm_cvtsi64_si128((long long) iq2s_grid[ix[2]]),
+                                                 (long long) iq2s_grid[ix[3]], 1);
+            const __m256i g = _mm256_inserti128_si256(_mm256_castsi128_si256(g01), g23, 1);
+            const __m256i sgn = _mm256_load_si256((const __m256i*) p.sg[i][c]);
+            const __m256i sc = _mm256_load_si256((const __m256i*) scale_tab.v[b[74 + c]]);
+            const int off = 32 * c;
+            for (int t = 0; t < NT; ++t) {
+                const __m256i yv = _mm256_loadu_si256((const __m256i*) (y[t][i].qs + off));
+                const __m256i ys = _mm256_sign_epi8(yv, sgn);
+                acci[t] = _mm256_add_epi32(acci[t], _mm256_madd_epi16(_mm256_maddubs_epi16(g, ys), sc));
+            }
+        }
+        const float dx = h2f(u16(b)) * 0.125f;
+        for (int t = 0; t < NT; ++t)
+            accf[t] = _mm256_fmadd_ps(_mm256_set1_ps(dx * y[t][i].d), _mm256_cvtepi32_ps(acci[t]), accf[t]);
+    }
+    for (int t = 0; t < NT; ++t) res[t] = hsum8(accf[t]);
+}
+
+template <int NT>
+void gu_rows_v3_22(const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act, float* const* ff,
+                   int r0, int r1) {
+    const block_q8_K* y[NT];
+    for (int t = 0; t < NT; ++t) y[t] = (const block_q8_K*) act[t];
+    const int nb = n / QK_K;
+    float g[NT], u[NT];
+    for (int r = r0; r < r1; ++r) {
+        row_dot_v3_22<NT>(blob + (size_t) r * gu_row, nb, y, g);
+        row_dot_v3_22<NT>(blob + up_off + (size_t) r * gu_row, nb, y, u);
+        for (int t = 0; t < NT; ++t) ff[t][r] = (g[t] / (1.f + std::exp(-g[t]))) * u[t];
+    }
+}
+
+void gu_rows_v3_22_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                      float* const* ff, int r0, int r1) {
+    switch (nt) {
+        case 1: gu_rows_v3_22<1>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 2: gu_rows_v3_22<2>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 3: gu_rows_v3_22<3>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 4: gu_rows_v3_22<4>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        default: for (int t0 = 0; t0 < nt; t0 += 4) {
+            const int k = nt - t0 < 4 ? nt - t0 : 4;
+            gu_rows_v3_22_nt(k, blob, gu_row, up_off, n, act + t0, ff + t0, r0, r1);
+        }
+    }
+}
+
+// ---- IQ3_S (21): d, qs[64] (grid low bytes), qh[8] (bit 8 of each index), signs[32], scales[4].
+// Per block: the 64 grid indices (qs[e] | bit e%8 of qh[e/8] << 8) in four vectors and the 256 sign bytes in eight,
+// stored whole and read back whole; per 32 values: eight index loads and grid inserts, one sign load, one scale load.
+
+struct Prep21 {
+    alignas(32) uint16_t idx[kMaxBlocks][64];
+    alignas(32) int8_t sg[kMaxBlocks][8][32];
+};
+
+STRATA_IQ_NOINLINE void prep_row_21(const uint8_t* row, int nblocks, Prep21& p) {
+    // 16-bit lane e of group g (entries 16g + e): qh byte 2g + e/8, times 2^(8 - e%8), bit 8 kept
+    alignas(32) static const uint16_t kMul[16] = {256, 128, 64, 32, 16, 8, 4, 2, 256, 128, 64, 32, 16, 8, 4, 2};
+    alignas(32) static const int8_t kRep[32] = {0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1, 0, -1,
+                                                1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1};
+    alignas(32) static const uint8_t kSel[32] = {1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128,
+                                                 1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128};
+    alignas(32) static const int8_t kByte[32] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+                                                 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3};
+    const __m256i mul = _mm256_load_si256((const __m256i*) kMul);
+    const __m256i rep = _mm256_load_si256((const __m256i*) kRep);
+    const __m256i sel = _mm256_load_si256((const __m256i*) kSel);
+    const __m256i byt = _mm256_load_si256((const __m256i*) kByte);
+    const __m256i m100 = _mm256_set1_epi16(0x100), one8 = _mm256_set1_epi8(1);
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* b = row + (size_t) i * 110;
+        rows_ahead(b + prefetch_ahead);
+        for (int g = 0; g < 4; ++g) {
+            const __m256i qh = _mm256_shuffle_epi8(_mm256_set1_epi16((short) u16(b + 66 + 2 * g)), rep);
+            const __m256i hi = _mm256_and_si256(_mm256_mullo_epi16(qh, mul), m100);
+            const __m256i lo = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*) (b + 2 + 16 * g)));
+            _mm256_store_si256((__m256i*) (p.idx[i] + 16 * g), _mm256_or_si256(lo, hi));
+        }
+        for (int c = 0; c < 8; ++c) {          // chunk c's sign bits: signs[4c .. 4c + 3]
+            const __m256i bits = _mm256_shuffle_epi8(_mm256_set1_epi32((int) u32(b + 74 + 4 * c)), byt);
+            _mm256_store_si256((__m256i*) p.sg[i][c],
+                               _mm256_or_si256(_mm256_cmpeq_epi8(_mm256_and_si256(bits, sel), sel), one8));
+        }
+    }
+}
+
+template <int NT>
+inline void row_dot_v3_21(const uint8_t* row, int nblocks, const block_q8_K* const* y, float* res) {
+    alignas(32) Prep21 p;
+    prep_row_21(row, nblocks, p);
+    __m256 accf[NT];
+    for (int t = 0; t < NT; ++t) accf[t] = _mm256_setzero_ps();
+    for (int i = 0; i < nblocks; ++i) {
+        const uint8_t* b = row + (size_t) i * 110;
+        __m256i acci[NT];
+        for (int t = 0; t < NT; ++t) acci[t] = _mm256_setzero_si256();
+        for (int c = 0; c < 8; ++c) {
+            const uint16_t* ix = p.idx[i] + 8 * c;
+            const __m256i g = _mm256_set_epi32((int) iq3s_grid[ix[7]], (int) iq3s_grid[ix[6]], (int) iq3s_grid[ix[5]],
+                                               (int) iq3s_grid[ix[4]], (int) iq3s_grid[ix[3]], (int) iq3s_grid[ix[2]],
+                                               (int) iq3s_grid[ix[1]], (int) iq3s_grid[ix[0]]);
+            const __m256i sgn = _mm256_load_si256((const __m256i*) p.sg[i][c]);
+            const uint8_t s = b[106 + (c >> 1)];
+            const __m256i sc = _mm256_load_si256((const __m256i*) sc32_tab.v[(c & 1) ? (s >> 4) : (s & 15)]);
+            const int off = 32 * c;
+            for (int t = 0; t < NT; ++t) {
+                const __m256i yv = _mm256_loadu_si256((const __m256i*) (y[t][i].qs + off));
+                const __m256i ys = _mm256_sign_epi8(yv, sgn);
+                acci[t] = _mm256_add_epi32(acci[t], _mm256_madd_epi16(_mm256_maddubs_epi16(g, ys), sc));
+            }
+        }
+        const float dx = h2f(u16(b));   // IQ3_S: K = 1
+        for (int t = 0; t < NT; ++t)
+            accf[t] = _mm256_fmadd_ps(_mm256_set1_ps(dx * y[t][i].d), _mm256_cvtepi32_ps(acci[t]), accf[t]);
+    }
+    for (int t = 0; t < NT; ++t) res[t] = hsum8(accf[t]);
+}
+
+template <int NT>
+void gu_rows_v3_21(const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act, float* const* ff,
+                   int r0, int r1) {
+    const block_q8_K* y[NT];
+    for (int t = 0; t < NT; ++t) y[t] = (const block_q8_K*) act[t];
+    const int nb = n / QK_K;
+    float g[NT], u[NT];
+    for (int r = r0; r < r1; ++r) {
+        row_dot_v3_21<NT>(blob + (size_t) r * gu_row, nb, y, g);
+        row_dot_v3_21<NT>(blob + up_off + (size_t) r * gu_row, nb, y, u);
+        for (int t = 0; t < NT; ++t) ff[t][r] = (g[t] / (1.f + std::exp(-g[t]))) * u[t];
+    }
+}
+
+void gu_rows_v3_21_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                      float* const* ff, int r0, int r1) {
+    switch (nt) {
+        case 1: gu_rows_v3_21<1>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 2: gu_rows_v3_21<2>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 3: gu_rows_v3_21<3>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 4: gu_rows_v3_21<4>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        default: for (int t0 = 0; t0 < nt; t0 += 4) {
+            const int k = nt - t0 < 4 ? nt - t0 : 4;
+            gu_rows_v3_21_nt(k, blob, gu_row, up_off, n, act + t0, ff + t0, r0, r1);
+        }
+    }
+}
+
 template <int TY>
-void gu_rows_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
-                float* const* ff, int r0, int r1) {
+void gu_rows_nt_legacy(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                       float* const* ff, int r0, int r1) {
     switch (nt) {
         case 1: gu_rows<TY, 1>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 2: gu_rows<TY, 2>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
@@ -388,6 +629,19 @@ void gu_rows_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n
         case 7: gu_rows<TY, 7>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
         default: gu_rows<TY, 8>(blob, gu_row, up_off, n, act, ff, r0, r1); break;
     }
+}
+
+template <int TY>
+void gu_rows_nt(int nt, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                float* const* ff, int r0, int r1) {
+    if constexpr (TY == 22 || TY == 21) {
+        if (!iq_legacy && !(TY == 21 && gather) && n / QK_K <= kMaxBlocks) {
+            if constexpr (TY == 22) gu_rows_v3_22_nt(nt, blob, gu_row, up_off, n, act, ff, r0, r1);
+            else gu_rows_v3_21_nt(nt, blob, gu_row, up_off, n, act, ff, r0, r1);
+            return;
+        }
+    }
+    gu_rows_nt_legacy<TY>(nt, blob, gu_row, up_off, n, act, ff, r0, r1);
 }
 
 template <int TY>
@@ -420,6 +674,19 @@ void iq256_gu_rows(int type, const uint8_t* blob, size_t gu_row, size_t up_off, 
         case 21: gu_rows_nt<21>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 22: gu_rows_nt<22>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
         case 23: gu_rows_nt<23>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        default: break;
+    }
+}
+
+void iq256_gu_rows_reference(int type, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
+                             int nt, float* const* ff, int r0, int r1) {
+    switch (type) {
+        case 16: gu_rows_nt_legacy<16>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 17: gu_rows_nt_legacy<17>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 18: gu_rows_nt_legacy<18>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 21: gu_rows_nt_legacy<21>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 22: gu_rows_nt_legacy<22>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
+        case 23: gu_rows_nt_legacy<23>(nt, blob, gu_row, up_off, n, act, ff, r0, r1); break;
         default: break;
     }
 }

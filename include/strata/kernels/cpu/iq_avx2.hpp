@@ -14,6 +14,10 @@ bool iq256_supported(int ggml_type) noexcept;
 /// ff[t][r] = silu(gate_r . a[t]) * (up_r . a[t]), rows [r0, r1); gate rows at blob, up rows at blob + up_off.
 void iq256_gu_rows(int ggml_type, const uint8_t* blob, size_t gu_row, size_t up_off, int n, const void* const* act,
                    int nt, float* const* ff, int r0, int r1);
+/// The same with the kernels before IQ2_S's and IQ3_S's per-block decode (what STRATA_IQ256_LEGACY=1 selects): the
+/// reference src/kernels/cpu/iq256_v3_parity.cpp checks iq256_gu_rows against, bit for bit.
+void iq256_gu_rows_reference(int ggml_type, const uint8_t* blob, size_t gu_row, size_t up_off, int n,
+                             const void* const* act, int nt, float* const* ff, int r0, int r1);
 /// out[t][r] = w_r . a[t], rows [r0, r1).
 void iq256_rows(int ggml_type, const uint8_t* w, size_t row_bytes, int n, const void* const* act, int nt,
                 float* const* out, int r0, int r1);

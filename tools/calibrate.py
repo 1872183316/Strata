@@ -42,6 +42,9 @@ SPEC_MIN_PS = (0.3, 0.5, 0.7)
 ADAPT_CANDIDATES = (None, ("1", "80", "0.97"), ("1", "160", "0.97"))
 ADAPT_FLAGS = ("--adapt-every", "--adapt-swaps", "--adapt-decay")
 MAX_NEW = 128
+# the expert tier follows a text over some windows: 128-token answers end before it shows (on a Xeon E5-2673 v3 with
+# DDR3, every 1 / 160 / 0.97 measured +0.7% with 128 tokens and +7.9% with 512-token answers), so its step uses these
+TIER_MAX_NEW = 512
 PROMPTS = (
     "Write a Python function that merges two sorted lists into one sorted list, with a docstring and two tests.",
     "Explain in two paragraphs how a refrigerator moves heat from inside to outside.",
@@ -94,13 +97,14 @@ class Session:
         self.engine = engine
         self.ids_list = ids_list
 
-    def rate(self, tune: dict | None = None) -> float:
+    def rate(self, tune: dict | None = None, max_new: int | None = None) -> float:
         rates = []
         for ids in self.ids_list:
             sampling = {"temperature": 0}
             if tune:
                 sampling["strata_tune"] = tune
-            n = sum(1 for t in self.engine.generate(ids, MAX_NEW, sampling, threading.Event()) if t is not None)
+            n = sum(1 for t in self.engine.generate(ids, max_new or MAX_NEW, sampling, threading.Event())
+                    if t is not None)
             ms = (self.engine.last or {}).get("decode_ms") or 0.0
             if n > 8 and ms > 0:
                 rates.append(n / (ms / 1000.0))
@@ -231,8 +235,8 @@ def measure(base_args: list[str], ids_list, start_engine, say=print) -> dict:
         e = start_engine(args)
         try:
             sa = Session(e, ids_list)
-            sa.warm_up(2)                                  # the tier needs some windows to follow the text
-            by_adapt[key] = [sa.rate(), sa.rate()]
+            sa.warm_up(1)
+            by_adapt[key] = [sa.rate(max_new=TIER_MAX_NEW), sa.rate(max_new=TIER_MAX_NEW)]
             say(f"    {statistics.median(by_adapt[key]):.1f} tok/s")
         finally:
             close(e)

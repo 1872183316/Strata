@@ -1142,6 +1142,17 @@ SUPPORTED_GGUFS = ("Strata runs ISTA-DASLab's GSQ-RCO files (Qwen3.8-Flash-Next 
                    "UD-Q2_K_XL, K-quants) cannot be used")
 
 
+def expert_bits(family: str, model: str) -> float | None:
+    """The routed experts' real bits per weight of a size setup installs, as its GGUF headers say
+    (data/gguf_fingerprints.json, made by tools/strata_inspect.py --fingerprints); None when not known."""
+    try:
+        table = json.loads((ROOT / "data" / "gguf_fingerprints.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    v = table.get(f"{family}/{model}")
+    return v.get("experts_bpw") if isinstance(v, dict) else None
+
+
 def gguf_unsupported(name: str) -> str | None:
     """#444: the quantization a GGUF's name says, when it is one Strata cannot run (not a setup size); else None."""
     m = GGUF_QUANT.search(name)
@@ -3585,6 +3596,9 @@ def main() -> int:
                     help="update the installed engine, Python packages and model settings as a start would, without "
                          "starting the model (UPDATE.bat / update.sh run it after a git pull)")
     ap.add_argument("--build", action="store_true", help="compile the engine instead of using the ready-made one")
+    ap.add_argument("--inspect", nargs="+", metavar=("SOURCE", "VARIANT"),
+                    help="what a GGUF is and whether Strata runs it, from its headers only (no download): a file, a "
+                         "folder, a URL, ms:owner/repo (ModelScope) or hf:owner/repo, and optionally a variant name")
     ap.add_argument("--cuda", choices=["12", "13", "auto"], default=os.environ.get("STRATA_CUDA") or None,
                     help="NVIDIA: the CUDA toolkit of this model's engine. auto (default): CUDA 13, the ready-made "
                          "engine; CUDA 12 (experimental) when a chosen card is older than CUDA 13 supports (Pascal, "
@@ -3622,6 +3636,8 @@ def main() -> int:
                          "sycl = Intel Arc, EXPERIMENTAL: Linux, built from source (docs/INTEL_ARC.md)")
     ap.add_argument("--skip-build", action="store_true", help=argparse.SUPPRESS)
     a = ap.parse_args()
+    if a.inspect:                                      # headers only: nothing is installed
+        sys.exit(subprocess.run([sys.executable, str(ROOT / "tools" / "strata_inspect.py"), *a.inspect[:2]]).returncode)
     if a.backend == "sycl":                            # Intel Arc: the SYCL port's own setup (sycl/setup_intel.py)
         return sycl_setup(sys.argv[1:])
     if a.resident_budget_gib is not None and not a.resident_budget_gib > 0:
@@ -3887,7 +3903,9 @@ def main() -> int:
         if low_ram_needed(m, ram) and low_ram_fits(m, ram, gpu["vram_gb"]) and a.low_ram != "off":
             fit = (f"   <- fits in the low-RAM mode (the GPU holds ~{100 * low_ram_gpu_share(m, gpu['vram_gb']):.0f}%, "
                    + ("the rest in RAM)" if low_ram_resident(m, ram, gpu["vram_gb"]) else "the rest from the SSD)"))
-        say(f"  {i}) {m:8s} {d['about']}; download {d['download_gb']:.0f} GB, uses ~{d['arena_gb']:.0f} GB of RAM{fit}")
+        bits = expert_bits(family, m)
+        say(f"  {i}) {m:8s} {d['about']}; download {d['download_gb']:.0f} GB, uses ~{d['arena_gb']:.0f} GB of RAM"
+            + (f", experts {bits:.2f} bits/weight" if bits else "") + fit)
     rec = str(names.index("IQ3_XXS") + 1) if ram >= 60 and "IQ3_XXS" in names else "1"
     model = a.model or names[int(ask("Which size?", [str(i) for i in range(1, len(names) + 1)], rec, a.yes)) - 1]
     budget, q4_split = None, False

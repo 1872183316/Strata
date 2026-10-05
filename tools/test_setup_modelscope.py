@@ -58,8 +58,9 @@ class Source(Base):
     def test_auto(self):
         def only(host):
             return lambda url, timeout=5.0: host in url
+        # this fork: ModelScope first
         for answers, want in ((only("huggingface.co"), "huggingface"), (only("modelscope.cn"), "modelscope"),
-                              (lambda url, timeout=5.0: True, "huggingface"),
+                              (lambda url, timeout=5.0: True, "modelscope"),
                               (lambda url, timeout=5.0: False, "huggingface")):
             setup._sources.clear()
             with mock.patch.object(setup, "reachable", side_effect=answers):

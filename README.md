@@ -1,3 +1,7 @@
+> **This is the `oldhw` branch of a fork** (older PCs: Haswell Xeon, DDR3, PCIe 3.0; +15% decode measured, see
+> Niko1221/Strata#906). 中文说明：[README.oldhw.zh-CN.md](README.oldhw.zh-CN.md)。The original project:
+> [Niko1221/Strata](https://github.com/Niko1221/Strata).
+
 <h1 align="center">Strata</h1>
 
 **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md)

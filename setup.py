@@ -133,9 +133,10 @@ def model_source() -> str:
         elif want in ("hf", "huggingface") or key[1]:
             _sources[key] = "huggingface"
         else:                                          # asked once per run
-            _sources[key] = "huggingface" if reachable(HF_PROBE, timeout=10) else \
-                "modelscope" if reachable(ms_url("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF", "README.md"), timeout=10) \
-                else "huggingface"   # a file, as download() asks: ModelScope's API answers HEAD with 404
+            # this fork: ModelScope first (mainland China), Hugging Face when it does not answer.  A file, as
+            # download() asks: ModelScope's API answers HEAD with 404.
+            _sources[key] = "modelscope" if reachable(ms_url("ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF", "README.md"),
+                                                      timeout=10) else "huggingface"
     return _sources[key]
 
 
@@ -3717,8 +3718,9 @@ def main() -> int:
                          "starting the model (UPDATE.bat / update.sh run it after a git pull)")
     ap.add_argument("--build", action="store_true", help="compile the engine instead of using the ready-made one")
     ap.add_argument("--source", choices=SOURCES, default=None,
-                    help="where the model files come from: auto (default: Hugging Face, or ModelScope when "
-                         "huggingface.co does not answer), modelscope or huggingface (STRATA_SOURCE)")
+                    help="where the model files come from: auto (default: ModelScope, or Hugging Face when "
+                         "ModelScope does not answer; Hugging Face when HF_ENDPOINT is set), modelscope or "
+                         "huggingface (STRATA_SOURCE)")
     ap.add_argument("--inspect", nargs="+", metavar=("SOURCE", "VARIANT"),
                     help="what a GGUF is and whether Strata runs it, from its headers only (no download): a file, a "
                          "folder, a URL, ms:owner/repo (ModelScope) or hf:owner/repo, and optionally a variant name")

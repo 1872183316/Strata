@@ -3695,6 +3695,23 @@ int main(int argc, char** argv) {
             err.clear();
         }
     }
+    // STRATA_LOOKAHEAD_STATS=1: score the next layer's router on this layer's MoE input as a predictor of the next
+    // layer's missed experts (a measurement for a PCIe prefetch; nothing computed changes)
+    static std::vector<std::vector<uint16_t>> la_routers;
+    if (const char* v = std::getenv("STRATA_LOOKAHEAD_STATS"); v != nullptr && std::atoi(v) != 0) {
+        la_routers.assign((size_t) g.n_layers, {});
+        bool ok = true;
+        for (int64_t l = 0; l < g.n_layers && ok; ++l) {
+            const strata::core::WeightRef* w = wt.find("blk." + std::to_string(l) + ".ffn_gate_inp.weight");
+            ok = w != nullptr && w->kind == strata::core::WeightKind::Bf16InF32 &&
+                 w->bytes == (uint64_t) (g.n_expert * g.n_embd) * 2;
+            if (!ok) break;
+            la_routers[(size_t) l].resize((size_t) (g.n_expert * g.n_embd));
+            ok = cudaMemcpy(la_routers[(size_t) l].data(), w->data, (size_t) w->bytes, cudaMemcpyDeviceToHost) == cudaSuccess;
+        }
+        if (ok) drive.d.la_routers = &la_routers;
+        std::fprintf(stderr, "strata generate: lookahead stats %s\n", ok ? "on" : "off (the routers are not BF16)");
+    }
     // ---- R4.2c: THE HIT PATH.  Every one of these is required for `hits_ready()`, which is all-or-nothing on
     // purpose: a half-configured hit path would compute some experts twice and others not at all, and a token
     // built on that is wrong rather than refused.
@@ -7211,6 +7228,7 @@ int main(int argc, char** argv) {
                 const std::string pr = ver.profile_report();
                 if (!pr.empty()) std::fprintf(stderr, "strata decode GPU stages (ms/window):%s\n", pr.c_str());
             }
+            strata::core::lookahead_stats_report(stderr);
             if (!cancelled) {
                 // a prompt stopped halfway leaves the session somewhere between two chunks: nothing to continue from
                 // (the checkpoints taken while reading it are still good)

@@ -1972,6 +1972,75 @@ void expert_pool_dispatch(void* user, const float* x_f, const int32_t* ids, cons
 }
 
 namespace {
+// STRATA_LOOKAHEAD_STATS: the prediction made at layer L for layer L + 1 (top-K of layer L + 1's router on layer L's
+// MoE input, per token, the experts not in VRAM), scored when layer L + 1 routes.  Three K at once.
+constexpr int kLaN = 3;
+constexpr int kLaK[kLaN] = {10, 16, 24};
+struct LaStats {
+    int64_t layers = 0, actual = 0, hit[kLaN] = {}, pred[kLaN] = {};
+    std::vector<int32_t> prev[kLaN];
+    int64_t prev_layer = -1;
+};
+LaStats g_la;
+
+void lookahead_stats_step(const ExpertDispatch& d, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k) {
+    if (d.la_routers == nullptr || d.host_res == nullptr) return;
+    const int64_t L = d.layers, NE = d.n_expert;
+    if (g_la.prev_layer == L) {
+        std::vector<int32_t> miss;
+        for (int64_t i = 0; i < n_tok * k; ++i) {
+            const int32_t e = ids[i];
+            if (e < 0 || e >= NE || d.host_res[(size_t) (L * NE + e)] >= 0) continue;
+            if (std::find(miss.begin(), miss.end(), e) == miss.end()) miss.push_back(e);
+        }
+        ++g_la.layers;
+        g_la.actual += (int64_t) miss.size();
+        for (int c = 0; c < kLaN; ++c) {
+            g_la.pred[c] += (int64_t) g_la.prev[c].size();
+            for (int32_t e : miss)
+                if (std::find(g_la.prev[c].begin(), g_la.prev[c].end(), e) != g_la.prev[c].end()) ++g_la.hit[c];
+        }
+    }
+    g_la.prev_layer = -1;
+    if (L + 1 >= (int64_t) d.la_routers->size()) return;
+    const std::vector<uint16_t>& R = (*d.la_routers)[(size_t) (L + 1)];
+    const int64_t n_embd = (int64_t) R.size() / NE, nt = std::min<int64_t>(n_tok, 8);
+    static thread_local std::vector<float> logits;
+    static thread_local std::vector<int32_t> order;
+    logits.resize((size_t) (nt * NE));
+    order.resize((size_t) NE);
+    strata::kernels::cpu::bf16_rows_dot_multi(R.data(), (int) NE, (int) n_embd, x_f, (int) nt, logits.data());
+    for (int c = 0; c < kLaN; ++c) g_la.prev[c].clear();
+    for (int64_t t = 0; t < nt; ++t) {
+        const float* lt = logits.data() + (size_t) (t * NE);
+        for (int64_t e = 0; e < NE; ++e) order[(size_t) e] = (int32_t) e;
+        std::partial_sort(order.begin(), order.begin() + kLaK[kLaN - 1], order.end(),
+                          [&](int32_t a, int32_t b) { return lt[(size_t) a] > lt[(size_t) b]; });
+        for (int c = 0; c < kLaN; ++c)
+            for (int j = 0; j < kLaK[c]; ++j) {
+                const int32_t e = order[(size_t) j];
+                if (d.host_res[(size_t) ((L + 1) * NE + e)] >= 0) continue;   // in VRAM: nothing to fetch
+                if (std::find(g_la.prev[c].begin(), g_la.prev[c].end(), e) == g_la.prev[c].end()) g_la.prev[c].push_back(e);
+            }
+    }
+    g_la.prev_layer = L + 1;
+}
+}  // namespace
+
+void lookahead_stats_report(std::FILE* f) {
+    if (g_la.layers == 0) return;
+    std::fprintf(f, "strata lookahead stats: %lld layer-windows, %.2f missed experts per layer-window", (long long) g_la.layers,
+                 (double) g_la.actual / (double) g_la.layers);
+    for (int c = 0; c < kLaN; ++c)
+        std::fprintf(f, "; top-%d: recall %.1f%%, %.2f predicted (precision %.1f%%)", kLaK[c],
+                     g_la.actual ? 100.0 * (double) g_la.hit[c] / (double) g_la.actual : 0.0,
+                     (double) g_la.pred[c] / (double) g_la.layers,
+                     g_la.pred[c] ? 100.0 * (double) g_la.hit[c] / (double) g_la.pred[c] : 0.0);
+    std::fprintf(f, "\n");
+    g_la = LaStats();
+}
+
+namespace {
 // the verify window's per-entry tables in `expert_pool_dispatch_multi` (`kind`, `distinct`, `first_of`)
 // are fixed arrays of this many entries: MAXT tokens of the model's 10 routed experts must fit, and a larger k is
 // refused at run time rather than written past them.
@@ -1990,6 +2059,27 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
         return;
     }
     if (d.lookahead != nullptr) d.lookahead->submit(d.layers, x_f, n_tok, d.host_res);   // CS-T: warm layer + 1
+    if (d.la_routers != nullptr) lookahead_stats_step(d, x_f, ids, n_tok, k);
+    {   // STRATA_ROUTE_TRACE=<file> (a measurement; nothing computed changes): this layer's routing and residency
+        static std::FILE* trace = [] {
+            const char* p = std::getenv("STRATA_ROUTE_TRACE");
+            return p != nullptr && *p != '\0' ? std::fopen(p, "ab") : nullptr;
+        }();
+        if (trace != nullptr && n_tok * k <= kMaxWindowEntries) {
+            const int32_t head[4] = {(int32_t) d.layers, (int32_t) n_tok, (int32_t) k, (int32_t) (n_tok * k)};
+            int16_t e16[kMaxWindowEntries];
+            uint8_t res[kMaxWindowEntries];
+            for (int64_t i = 0; i < n_tok * k; ++i) {
+                e16[i] = (int16_t) ids[i];
+                res[i] = (uint8_t) (d.host_res != nullptr && ids[i] >= 0 && ids[i] < d.n_expert &&
+                                    d.host_res[(size_t) d.layers * (size_t) d.n_expert + (size_t) ids[i]] >= 0);
+            }
+            std::fwrite(head, sizeof head, 1, trace);
+            std::fwrite(e16, sizeof(int16_t), (size_t) (n_tok * k), trace);
+            std::fwrite(res, 1, (size_t) (n_tok * k), trace);
+            if (d.layers == 0) std::fflush(trace);
+        }
+    }
     if (k < 1 || n_tok * k > kMaxWindowEntries) {
         d.failed = true;
         d.fail = "a verify window routes more entries than the expert pool's window tables hold";

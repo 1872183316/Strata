@@ -28,6 +28,8 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <vector>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -231,11 +233,17 @@ struct GpuPlanSink {
     int pcie_mode = 0;
 };
 
+/// STRATA_LOOKAHEAD_STATS: the scores since the last call, as one line on `f` (nothing when nothing was scored).
+void lookahead_stats_report(std::FILE* f);
+
 /// The adapter's own state.  One per session, reused every layer so the token path allocates nothing (P2.T10).
 struct ExpertDispatch {
     strata::kernels::cpu::ExpertPool* pool = nullptr;
     ExpertSource* src = nullptr;
     RouterLookahead* lookahead = nullptr;   ///< CS-T: warms the next layer's predicted file-tier experts
+    /// STRATA_LOOKAHEAD_STATS=1 (a measurement; nothing computed changes): every layer's BF16 router on the host, to
+    /// score how well layer L's MoE input predicts layer L+1's missed experts (lookahead_stats_report).
+    const std::vector<std::vector<uint16_t>>* la_routers = nullptr;
     RemoteExperts* remote[3] = {}; ///< optional CUDA1..3 tiers for otherwise CPU-served rows
     int remote_count = 0;
     int64_t n_expert = strata::kernels::cpu::NE;

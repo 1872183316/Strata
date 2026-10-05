@@ -18,6 +18,9 @@ and their limits. Report what you actually measured and label estimates separate
 - [2026-10-03: 2x AMD Instinct MI50 16 GB (gfx906), Xeon E5-2666 v3, 32 GB RAM](../bench/results/2026-10-03-community-2x-mi50/README.md):
   the gfx906 build (#638) with #639 and #640, Coder IQ1_M, 131,072-token context, layer split across both cards;
   three runs each at 4,096, 32,768, and 128,000 prompt tokens, plus six recall checks.
+- [2026-10-05: RTX 4060 Ti 16 GB (PCIe 3.0 x8), Xeon E5-2673 v3 (AVX2), 94 GB DDR3](../bench/results/2026-10-05-community-e5-2673v3-rtx-4060ti/README.md):
+  0.1.39 from source, original Q2_0 and IQ3_S, 64K context; the 0.1.39 path against #706 + #764 + a busier adaptive
+  tier, 3 rounds x 4 prompts x 2 passes each (Q2_0 48.1 -> 55.7, IQ3_S 30.5 -> 35.0 tok/s).
 
 ## What to record
 

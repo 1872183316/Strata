@@ -33,7 +33,7 @@ jobs:
         with:
           cuda: "13.0.2"
           method: network
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "crt", "nvvm", "nvptxcompiler", "cccl", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "crt", "nvvm", "nvptxcompiler", "thrust", "visual_studio_integration"]'
       - uses: ilammy/msvc-dev-cmd@v1
         with: {arch: x64}
       - name: engine

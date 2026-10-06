@@ -1,0 +1,339 @@
+// serve/web/i18n.js - the web app's languages: English and Simplified Chinese.
+// English is the source text and the key: t("Chat") is "Chat" in English and the dictionary's entry in another
+// language (the English text where the dictionary has none).  The pages mark static text with an empty data-i18n
+// attribute (the element's own text is the key) and data-i18n-attr="title,placeholder,aria-label" (those
+// attributes' English values are the keys).  Loaded before app.js and monitor.js.
+"use strict";
+
+const LANGS = {"en": "English", "zh-CN": "简体中文"};
+
+// the saved choice, else the browser's first language: any Chinese -> zh-CN
+function pickLang() {
+  try {
+    const saved = localStorage.getItem("strata.lang");
+    if (saved && LANGS[saved]) return saved;
+  } catch (e) { /* private mode */ }
+  const l = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
+  return /^zh\b/i.test(l) ? "zh-CN" : "en";
+}
+const LANG = pickLang();
+
+// t("{n} tokens", {n: 5}): the translation with the {names} filled in
+// A key may carry "|context" when one English text has two meanings ("Max tokens|finish"); English drops it.
+function t(s, vars) {
+  let out = (STRINGS[LANG] && STRINGS[LANG][s]) || s.replace(/\|[\w-]+$/, "");
+  if (vars) out = out.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  return out;
+}
+// a choice between two texts written in the code (long help texts, examples)
+const L = (en, zh) => (LANG === "zh-CN" ? zh : en);
+
+// the page reloads in the new language: the chats and settings are in localStorage
+function setLang(lang) {
+  try { localStorage.setItem("strata.lang", lang); } catch (e) { /* this page only */ }
+  location.reload();
+}
+
+const norm = (s) => s.replace(/\s+/g, " ").trim();
+function applyI18n(root = document) {
+  document.documentElement.lang = LANG;
+  for (const el of root.querySelectorAll("[data-i18n]")) {
+    if (!el.dataset.i18n) el.dataset.i18n = norm(el.textContent);
+    el.textContent = t(el.dataset.i18n);
+  }
+  for (const el of root.querySelectorAll("[data-i18n-attr]")) {
+    el._i18n = el._i18n || {};
+    for (const a of el.dataset.i18nAttr.split(",")) {
+      if (!(a in el._i18n)) el._i18n[a] = el.getAttribute(a);
+      if (el._i18n[a] != null) el.setAttribute(a, t(norm(el._i18n[a])));
+    }
+  }
+}
+
+// ------------------------------------------------------------------ Simplified Chinese
+// Plain words a Chinese user knows from other chat apps; numbers and units stay as the code writes them.
+const STRINGS = {"zh-CN": {
+  // header, tabs
+  "Chat": "对话", "Monitor": "监控", "About": "关于", "Views": "视图",
+  "Connecting…": "连接中…", "Light / dark": "浅色 / 深色", "Switch between light and dark": "切换浅色和深色",
+  "Language": "语言", "Switch the language": "切换语言",
+  // chat
+  "Ask anything": "有什么可以帮你？", "The model runs on this PC. Nothing leaves it.": "模型运行在这台电脑上，数据不会离开本机。",
+  "{model} runs on this PC. Nothing leaves it.": "{model} 运行在这台电脑上，数据不会离开本机。",
+  "Ask anything…": "输入问题，Enter 发送…", "Message": "消息",
+  "Attach a text file (or drop it here)": "添加文本文件（也可以拖到这里）",
+  "Attach a text file or a picture (or drop it here)": "添加文本文件或图片（也可以拖到这里，或直接粘贴图片）",
+  "Attach a file": "添加文件", "New chat": "新对话", "Save this chat as Markdown": "把这次对话导出为 Markdown",
+  "Save this chat": "导出对话", "Sampling and thinking": "生成参数和思考", "Stop": "停止", "Send": "发送",
+  "Shift+Enter: new line": "Shift+Enter 换行",
+  "You": "你", "Thinking…": "思考中…", "Thought for {s} s": "已思考 {s} 秒", "Thoughts": "思考过程",
+  "Writing": "正在写", "Stopped": "已停止", "Copy": "复制", "Copy the answer": "复制回答", "Copy code": "复制代码",
+  "Copied to clipboard": "已复制到剪贴板", "Regenerate": "重新生成", "Edit and send again": "编辑后重新发送",
+  "{n} tokens": "{n} 个 token", " · stopped": " · 已停止", " · projection on": " · 投影开", " · projection off": " · 投影关",
+  "{n} tool call": "调用工具 {n} 次", "{n} tool calls": "调用工具 {n} 次",
+  " · stopped at the limit of {n} tool rounds (mcp.max_rounds)": " · 已达到工具调用轮数上限 {n}（mcp.max_rounds）",
+  "The request failed": "请求失败", "the engine reported an error": "引擎报告了错误",
+  "This server needs an API key: add it under About > Settings.": "这个服务需要 API 密钥：请在“关于 > 设置”里填写。",
+  "Still writing": "还在生成", "Stop the answer first.": "请先停止当前回答。",
+  "Nothing to save yet": "还没有可以导出的内容", "Tool": "工具", "Thinking": "思考",
+  // tool calls
+  "Running": "运行中", "Done": "完成", "Error": "错误", "Not run": "未运行", "Arguments": "参数", "Result": "结果",
+  "(being written)": "（正在写）", " · {n} characters": " · {n} 个字符", ", cut for the model": "，给模型时已截断",
+  // attachments
+  "Pictures are off": "未开启图片", "This model was set up for text only.": "这个模型安装时选择了只处理文字。",
+  "Picture too large": "图片太大", "{name} is over 20 MB.": "{name} 超过 20 MB。",
+  "Not a text file": "不是文本文件",
+  "{name}: attach text files (code, notes, logs, data).": "{name}：只能添加文本文件（代码、笔记、日志、数据）。",
+  "{name}: attach text files (code, notes, logs, data) or pictures.": "{name}：只能添加文本文件（代码、笔记、日志、数据）或图片。",
+  "File too large": "文件太大", "{name} is over 512 KB.": "{name} 超过 512 KB。",
+  "{name} looks like a binary file.": "{name} 看起来是二进制文件。", "Remove": "移除", "pasted image": "粘贴的图片",
+  // conversations
+  "Conversations": "对话记录", "Search chats": "搜索对话", "No chats yet": "还没有对话", "No matching chats": "没有找到匹配的对话",
+  "Today": "今天", "Yesterday": "昨天", "Previous 7 days": "7 天内", "Older": "更早",
+  "Rename": "重命名", "Delete": "删除", "New conversation": "新对话", "Untitled": "未命名对话",
+  "Chat deleted": "对话已删除", "Undo": "撤销", "Rename this chat": "重命名对话",
+  "Show or hide the chat list": "显示或隐藏对话列表",
+  "The browser's storage is full": "浏览器存储空间已满",
+  "This chat was not saved. Delete some old chats and try again.": "这次对话没有保存成功。请删除一些旧对话后再试。",
+  "Chats are kept in this browser only.": "对话只保存在这个浏览器里。",
+  // monitor
+  "Model state": "模型状态", "Idle": "空闲", "Reading": "读入中", "Generating": "生成中", "Queued": "排队中",
+  "Waiting for a request": "等待请求", "Context fill": "上下文占用", "Experts in VRAM": "显存中的专家",
+  "System RAM": "系统内存", "GPU temperature": "显卡温度", "Recent requests": "最近的请求", "Show all": "显示全部",
+  "Show all ({n})": "显示全部（{n}）", "Show fewer": "收起",
+  "Time": "时间", "Status": "状态", "Prompt": "提示词", "Reused": "复用", "Output": "输出", "Tok/s": "速度",
+  "VRAM hit rate": "显存命中率", "Duration": "耗时", "No requests yet": "还没有请求",
+  "While writing the answer: the share of the experts looked up that were already in VRAM. Experts the GPU read over PCIe (--pcie-frac) are not counted in it; their share of all routed experts is shown after it (+N% PCIe)":
+    "生成回答时，用到的专家里已经在显存中的比例。显卡通过 PCIe 直接从内存读取的专家（--pcie-frac）不算在内，它们的比例显示在后面（+N% PCIe）",
+  "Conversation cache": "对话缓存", "Parked conversations": "暂存的对话", "Their memory (RAM)": "占用的内存",
+  "MCP servers": "MCP 工具服务",
+  "Their tools run on this PC with your rights, when the model decides to call them (in this page's chat only; switch it off in Sampling).":
+    "模型决定调用时，这些工具会以你的权限在这台电脑上运行（只在本页面的对话里；可在“生成参数”里关闭）。",
+  "Speed": "速度", "GPU load": "显卡负载", "VRAM": "显存", "GPU temp": "显卡温度", "Power": "功耗", "CPU": "CPU",
+  "Disk read": "硬盘读取", "Decode": "生成", "Prefill": "读入", "Decode now": "当前生成速度", "Decode last request": "上次生成速度",
+  "Prefill now": "当前读入速度", "Prefill this request": "本次读入速度", "Prefill last request": "上次读入速度",
+  "Reading prompt": "读入提示词", "Reading prompt · {pct}%": "读入提示词 · {pct}%", "Generating · {s} tok/s": "生成中 · {s} token/秒",
+  "{n} queued": "{n} 个排队", "API key needed": "需要 API 密钥",
+  "This server needs a key: add it under About > Settings.": "这个服务需要密钥：请在“关于 > 设置”里填写。",
+  "Server not reachable": "连接不上服务",
+  "{a} / {b} tokens · {pct}%": "{a} / {b} token · {pct}%", "last: {n} tokens": "上次：{n} 个 token",
+  "last: {n} tokens at {s} tok/s": "上次：{n} 个 token，{s} token/秒", "{n} tokens · {s} tok/s": "{n} 个 token · {s} token/秒",
+  "{n} experts cached": "已缓存 {n} 个专家", "of {n} W limit": "上限 {n} W", "to GPU {n} MB/s": "到显卡 {n} MB/s",
+  " · idle Gen{n}": " · 空闲时 Gen{n}", "{c} cores · ": "{c} 核 · ", "{n} threads": "{n} 线程",
+  "needs psutil (setup installs it)": "需要 psutil（setup 会安装）", "write {n} MB/s": "写入 {n} MB/s",
+  "Max tokens|finish": "达到长度上限", "Closed": "已断开", "experimental speed projection on": "实验性投影：开",
+  "experimental speed projection off": "实验性投影：关", "stock": "原版",
+  "routed experts the GPU read over PCIe (--pcie-frac) or another GPU computed": "显卡通过 PCIe 读取（--pcie-frac）或由另一张显卡计算的专家",
+  "Since {t}: ": "自 {t} 起：", "{n} requests · ": "{n} 个请求 · ", "{n} prompt tokens read": "读入 {n} 个提示词 token",
+  " at {s} tok/s": "，{s} token/秒", " ({n} reused) · ": "（复用 {n} 个）· ", "{n} written": "生成 {n} 个 token",
+  "just now": "刚刚", "{n} min ago": "{n} 分钟前", "{n} h ago": "{n} 小时前",
+  "{a} of {b} requests reused part of their prompt": "{b} 个请求中有 {a} 个复用了部分提示词",
+  " ({n}% of all prompt tokens)": "（占全部提示词 token 的 {n}%）",
+  "Parked": "暂存", "Restored": "恢复", "{what} {n} tokens, {when}": "{what} {n} 个 token，{when}",
+  "Last request": "上一个请求", "{a} of {b} prompt tokens reused": "{b} 个提示词 token 中复用了 {a} 个",
+  "Reused since start": "启动以来复用", "Parked / restored": "暂存 / 恢复",
+  " · {n} evicted": " · 淘汰 {n} 个", "Last switch": "上次切换",
+  "A request that continues a parked conversation gets its state back instead of reading it again; the oldest goes when the slots or the memory are full.":
+    "继续一个已暂存对话的请求会直接恢复状态，不用重新读入；位置或内存满了时，最早的对话会被移出。",
+  "The engine keeps the last conversation's state, so a follow-up reads only what is new. To keep several conversations (agents taking turns), add \"--conversation-cache-mib\", \"8192\" to the run config's args (docs/DETAILS.md).":
+    "引擎会保留上一个对话的状态，追问时只读入新增的部分。要同时保留多个对话（例如多个智能体轮流使用），在运行配置的 args 里加上 \"--conversation-cache-mib\", \"8192\"（见 docs/DETAILS.md）。",
+  "Connected": "已连接", "Starting": "启动中", "Failed": "失败", "Waiting": "等待中",
+  "{n} tools · {a} of {b} servers connected": "{n} 个工具 · 已连接 {a}/{b} 个服务",
+  "{n} tools from {names}; the model calls them when it decides to": "来自 {names} 的 {n} 个工具；模型需要时会调用",
+  "no server is connected yet (see the Monitor)": "还没有连接上的服务（见“监控”页）", "{n} tools": "{n} 个工具",
+  // about
+  "Model and engine": "模型和引擎", "This PC": "本机", "Connect your tools": "接入其他应用",
+  "Any OpenAI- or Anthropic-compatible client works with these addresses.": "任何兼容 OpenAI 或 Anthropic 接口的客户端都可以用下面的地址接入。",
+  "Settings": "设置", "API key": "API 密钥", "only if the server was started with one": "只有服务设置了密钥时才需要填",
+  "Not needed": "不需要", "Dark theme": "深色主题", "Chats, settings and the key are kept in this browser only.": "对话、设置和密钥只保存在这个浏览器里。",
+  "Strata on GitHub": "Strata 的 GitHub 主页", "Model settings": "模型设置",
+  "Kept in the model's run config for every client. An empty field is the default. They take effect the next time the model starts (close Strata's window and start it again).":
+    "保存在模型的运行配置里，对所有客户端生效。留空 = 默认值。下次启动模型时生效（关闭 Strata 窗口后重新启动）。",
+  "Save": "保存", "API key saved": "API 密钥已保存", "Kept in this browser only.": "只保存在这个浏览器里。",
+  "Model": "模型", "Engine": "引擎", "built from source": "从源码编译", "Context": "上下文",
+  "KV cache": "KV 缓存", "8-bit": "8 位", "4-bit (Hadamard-rotated)": "4 位（Hadamard 旋转）", "16-bit": "16 位",
+  ", streamed: {n} positions per layer in VRAM, the rest in RAM": "，分流：每层 {n} 个位置放显存，其余放内存", ", all in VRAM": "，全部在显存",
+  "Speculation": "投机解码", "MTP drafts up to {n} tokens": "MTP 草稿层每次最多猜 {n} 个 token", ", prompt lookup on": "，开启提示词查找",
+  "Images": "图片", "on": "开", "off": "关", "Experimental speed projection": "实验性投影",
+  "GPU": "显卡", "not readable (NVML)": "读取不到（NVML）", "RAM": "内存", ", {n} threads": "，{n} 线程",
+  "OpenAI base URL": "OpenAI 接口地址", "Anthropic base URL": "Anthropic 接口地址", "Model name": "模型名称",
+  "default": "默认", "Nothing changed.": "没有修改。", "Not saved": "没有保存",
+  "Saved ({keys}); the earlier file is {file}.bak. Start the model again to use it.": "已保存（{keys}）；原文件备份为 {file}.bak。重新启动模型后生效。",
+  "Command-line options": "命令行参数说明",
+  "What setup.sh / START-HERE.bat and the run config's \"args\" accept. Click a group to open it.":
+    "setup.sh / START-HERE.bat 和运行配置里 \"args\" 可以用的参数。点击分组展开。",
+  "Option": "参数", "What it does": "作用",
+  "Popular clients": "常用客户端怎么填",
+  // API monitor page (monitor.html)
+  "Local inference": "本地推理", "API Monitor": "API 监控", "Model status and every request, in one place.": "模型状态和每一个请求，都在这里。",
+  "Load model": "加载模型", "Unload model": "卸载模型", "Only needed if the server has a key": "只有服务设置了密钥时才需要",
+  "Connect": "连接", "Requests retained": "保留的请求", "Waiting for server": "等待服务", "Last wall-clock": "上次总耗时",
+  "Includes queue and model loading": "包括排队和加载模型的时间", "Last decode speed": "上次生成速度",
+  "Engine timing · tokens / second": "引擎计时 · token/秒", "Requests": "请求", "Filter requests": "筛选请求",
+  "Search ID or endpoint": "搜索 ID 或接口", "Request status": "请求状态", "All statuses": "全部状态", "Active": "进行中",
+  "Completed": "已完成", "Errors": "出错", "Request list": "请求列表", "Inspect a request": "查看请求",
+  "Select a request to see its input, output, and timings.": "选择一个请求，查看它的输入、输出和耗时。",
+  "Wall-clock": "总耗时", "Model load": "模型加载", "Queue wait": "排队等待", "First token": "首个 token",
+  "Prompt tokens": "提示词 token", "Output tokens": "输出 token", "Decode speed": "生成速度", "Response format": "返回格式",
+  "Request content": "请求内容", "Input": "输入", "Reasoning": "思考", "API response": "API 返回",
+  "Last 100 requests kept in memory until restart. Inputs and outputs stay on this machine.": "最近 100 个请求保存在内存里，重启后清空。输入和输出都不会离开本机。",
+  "Switch color theme": "切换颜色主题", "No matching requests.": "没有匹配的请求。",
+  "No requests yet. API calls will appear here automatically.": "还没有请求。API 调用会自动显示在这里。",
+  "Request {id}": "请求 {id}", "stream": "流式", "JSON response": "JSON 返回",
+  "Streaming response: see Output and the request error, if any.": "流式返回：请看“输出”和请求错误（如果有）。", "No content.": "没有内容。",
+  "Raw model output retained for diagnosis. The API returned an error.": "保留了模型的原始输出供排查。API 返回了错误。",
+  "Original request body.": "原始请求内容。", "Model answer. JSON is formatted here for readability.": "模型的回答。JSON 已格式化以便阅读。",
+  "Separate reasoning content, when enabled.": "单独返回的思考内容（开启时才有）。", "API response body.": "API 返回的内容。",
+  " Monitor capture truncated at 256K characters; the API response was not shortened.": " 监控只记录了前 256K 个字符；API 实际返回的内容没有被截断。",
+  "Loading…": "加载中…", "In use": "使用中", "Loaded": "已加载", "Unloaded": "未加载", "Unloading…": "卸载中…",
+  "{n} active / queued": "{n} 个进行中 / 排队", "Loads automatically on the next request": "下一个请求到来时自动加载",
+  "No active requests": "没有进行中的请求", "Live · updated {time}": "实时 · 更新于 {time}", "Disconnected · retrying": "已断开 · 正在重试",
+  "Copied": "已复制", "Clipboard unavailable; select the text to copy it.": "无法使用剪贴板，请选中文字后手动复制。",
+  "completed": "已完成", "error": "出错", "disconnected": "已断开", "loading": "加载中", "generating": "生成中", "queued": "排队中",
+  "PCIe": "PCIe",
+  // sampling drawer
+  "Sampling": "生成参数", "Close": "关闭", "Off": "不思考", "Low": "简短", "Medium": "中等", "High": "深入",
+  "answers right away": "直接回答", "short": "简短", "medium": "中等", "thorough (default)": "深入（默认）",
+  "Temperature": "温度", "0 = always the most likely word (exact, repeatable)": "0 = 每次都选最可能的词（结果确定、可复现）",
+  "Top-p": "Top-p", "Top-k": "Top-k", "Max tokens": "最大长度", "empty = until done": "留空 = 写完为止", "Until done": "写完为止",
+  "Seed": "随机种子", "empty = random": "留空 = 随机", "Random": "随机", "Show thinking": "显示思考过程",
+  "expanded while it streams": "生成时自动展开", "Use tools from MCP servers": "使用 MCP 工具",
+  "the model may call them while it answers": "模型回答时可以调用它们",
+  "the engine's control vector; off = the stock model. Switching reads the chat again once": "引擎的控制向量；关 = 原版模型。切换后会重新读入一次对话",
+  "Use for other apps too": "也用于其他应用",
+  "omp and other API clients get these settings for anything they don't set themselves": "omp 和其他 API 客户端没有自己设置的参数，都使用这里的值",
+  "Reset": "恢复默认", "Apply": "应用", "0 · greedy": "0 · 确定",
+  "Sampling saved": "生成参数已保存", "Greedy: the same question gives the same answer.": "温度为 0：同样的问题会得到同样的回答。",
+  "Other apps (omp, API clients) use these settings from their next request.": "其他应用（omp、API 客户端）从下一个请求起使用这些设置。",
+  "Other apps use their own settings again.": "其他应用重新使用它们自己的设置。",
+  "Saved here, but not for other apps": "已在本页保存，但没有应用到其他应用",
+  "Preset": "预设", "Precise": "精确", "Balanced": "平衡", "Creative": "创意",
+  "System prompt": "系统提示词", "Role: {name}": "角色：{name}", "None": "无", "Custom": "自定义",
+  "Sent before every chat as the model's instructions. Empty = none.": "每次对话前发给模型的指令，用来设定角色和回答方式。留空 = 不使用。",
+  "Thinking depth": "思考深度", "Answering": "回答中", "Tool call complete": "工具调用完成",
+  "Writing a tool call: {name}": "正在写工具调用：{name}",
+  // model manager page (setup.html)
+  "Model manager": "模型管理",
+  "Open the chat": "打开对话",
+  "Check again": "重新检测",
+  "Checked again": "已重新检测",
+  "Check for another PC": "评估另一台电脑",
+  "Enter another PC's RAM and VRAM to see what would run there (for example before buying or downloading).": "输入另一台电脑的内存和显存，看看哪些版本能在那台电脑上运行（比如买电脑或下载之前先评估）。",
+  "RAM (GB)": "内存（GB）",
+  "VRAM (GB)": "显存（GB）",
+  "Check": "评估",
+  "Enter both numbers": "请填写内存和显存两个数字",
+  "Model folder": "模型目录",
+  "{n} GB free": "可用 {n} GB",
+  "System": "系统",
+  "cannot be used": "不能使用",
+  "none found (Strata needs an NVIDIA RTX 20 series or newer, or a supported AMD card)": "没有找到（Strata 需要 NVIDIA RTX 20 系列或更新的显卡，或受支持的 AMD 显卡）",
+  "Download source": "下载源",
+  "Test the connection": "测试连接",
+  "Testing…": "测试中…",
+  "Reachable": "可以连接",
+  "Not reachable": "连接不上",
+  "Will use {name}": "将使用 {name}",
+  "The test failed": "测试失败",
+  "Automatic (recommended)": "自动（推荐）",
+  "ModelScope first; Hugging Face when ModelScope does not answer": "先用 ModelScope（魔搭），连不上时改用 Hugging Face",
+  "ModelScope": "ModelScope（魔搭社区）",
+  "modelscope.cn, fast in mainland China; every file is checked against its published SHA-256": "modelscope.cn，国内下载快；每个文件都按官方公布的 SHA-256 校验",
+  "Hugging Face": "Hugging Face",
+  "huggingface.co (or HF_ENDPOINT, e.g. a mirror)": "huggingface.co（或环境变量 HF_ENDPOINT 指定的镜像站）；国内通常连不上",
+  "Models": "模型",
+  "Strata runs one model, Qwen3.8-Flash-Next (125B parameters, mixture of experts), in several versions and sizes. Which size fits depends mostly on your RAM; a bigger graphics card makes it faster.": "Strata 只运行一个模型：Qwen3.8-Flash-Next（1250 亿参数，混合专家架构），有几个版本和多种大小。能用哪个大小主要看内存；显卡越大跑得越快。",
+  "Runs well": "可以正常运行",
+  "Runs, slower": "能运行，但较慢",
+  "Will not run": "无法运行",
+  "Bits: the real bits per weight of the experts (most of the file), read from the files.": "位数：专家（占文件的大部分）每个权重实际用的位数，从文件本身读出，不看文件名。",
+  "For this PC": "按本机配置",
+  "For a PC with {ram} GB of RAM and {vram} GB of VRAM": "按 {ram} GB 内存、{vram} GB 显存的电脑评估",
+  "Installed": "已安装",
+  "Start": "启动",
+  "Download and install": "下载并安装",
+  "Experimental": "实验性",
+  "Experimental.": "实验性功能。",
+  "{b} bits": "{b} 位",
+  "Download {d} GB · experts {e} GB in RAM": "下载 {d} GB · 专家占内存 {e} GB",
+  "Q1 class": "Q1 级",
+  "Q2 class": "Q2 级",
+  "Q3 class": "Q3 级",
+  "Q4 class": "Q4 级",
+  "Q5 class": "Q5 级",
+  "Q6 class": "Q6 级",
+  "Q8 class": "Q8 级",
+  "32-bit": "32 位",
+  "Fits: {experts} GB of experts in {ram} GB of RAM.": "放得下：{experts} GB 的专家放进 {ram} GB 内存。",
+  "No graphics card Strata can use (NVIDIA RTX 20 series or newer, or a supported AMD card).": "没有 Strata 能用的显卡（需要 NVIDIA RTX 20 系列或更新，或受支持的 AMD 显卡）。",
+  "{vram} GB of VRAM: Strata needs at least {need} GB.": "显存 {vram} GB：Strata 至少需要 {need} GB。",
+  "{vram} GB of VRAM: it starts, but fewer experts fit on the card, so it is slower ({want} GB or more recommended).": "显存 {vram} GB：能启动，但显卡上放的专家少，速度较慢（建议 {want} GB 以上）。",
+  "This size runs on NVIDIA cards only.": "这个大小只支持 NVIDIA 显卡。",
+  "{ram} GB of RAM: part of its {experts} GB of experts is read from the SSD while it answers (about {need} GB of RAM holds them all).": "内存 {ram} GB：{experts} GB 专家中有一部分要在回答时从硬盘读取（约 {need} GB 内存才能全部放下）。",
+  "{ram} GB of RAM is less than its {experts} GB of experts + 10 GB: the low-RAM mode reads experts from the SSD, much slower (about {need} GB of RAM runs it normally).": "内存 {ram} GB，不够放下 {experts} GB 专家再留 10 GB：会用低内存模式从硬盘读专家，慢很多（约 {need} GB 内存才能正常运行）。",
+  "{ram} GB of RAM: it needs about {need} GB. The model will not start.": "内存 {ram} GB：需要约 {need} GB。模型无法启动。",
+  "Only {free} GB free in the model folder; the download needs about {need} GB (choose another folder with --data-dir).": "模型目录只剩 {free} GB 空间，需要约 {need} GB（可以用 --data-dir 换到空间更大的硬盘）。",
+  "Showing another PC": "正在显示另一台电脑的评估",
+  "Switch back to this PC before installing.": "请先切换回“本机”再安装。",
+  "This PC does not meet the requirements for {model}: after the download the model will not start.\n\nDownload anyway?": "这台电脑的配置达不到 {model} 的要求：下载完成后模型也无法启动。\n\n仍然要下载吗？",
+  "{model} will run on this PC, but slower:\n\n{why}\n\nDownload it ({gb} GB)?": "{model} 能在这台电脑上运行，但会比较慢：\n\n{why}\n\n要下载吗（{gb} GB）？",
+  "Something is already running": "已经有任务在运行",
+  "Wait for it to finish, or stop it.": "请等它完成，或者先停止它。",
+  "Could not start the install": "无法开始安装",
+  "Could not start the model": "无法启动模型",
+  "Installing {what}": "正在安装 {what}",
+  "Starting {what}": "正在启动 {what}",
+  "Running: open the chat.": "已在运行：可以打开对话了。",
+  "Loading the model (1-3 minutes)…": "正在加载模型（约 1～3 分钟）…",
+  "Running for {m} min {s} s. The download resumes where it stopped if it is interrupted.": "已运行 {m} 分 {s} 秒。下载中断后再次安装会接着下载，不用从头开始。",
+  "Installed. Start it from the list above.": "安装完成。在上面的列表里点“启动”。",
+  "The model stopped.": "模型已停止。",
+  "Stopped with an error (code {c}): see the log below.": "出错停止（返回码 {c}）：请看下面的日志。",
+  "Stop it? A download can be resumed later.": "确定停止吗？下载以后可以接着继续。",
+  "Which quantization is this file?": "识别模型文件的量化",
+  "Reads only the headers (a few MB, nothing is downloaded): the real bits of every weight group, whether it is Q2, Q3 or Q4 class, and whether Strata runs it. A file's name does not always say it.": "只读取文件头（几 MB，不下载整个模型）：列出每组权重实际用的位数，判断它是 Q2、Q3 还是 Q4 级，以及 Strata 能不能运行。文件名不一定反映真实的量化。",
+  "ms:owner/repo, hf:owner/repo, a URL, a .gguf file or a folder": "ms:作者/仓库（魔搭）、hf:作者/仓库、网址、.gguf 文件或文件夹",
+  "Variant (optional)": "版本（可选）",
+  "Inspect": "识别",
+  "Examples:": "示例：",
+  "Reading the headers…": "正在读取文件头…",
+  "No model .gguf files there.": "那里没有模型 .gguf 文件。",
+  "No variant matches.": "没有匹配的版本。",
+  "{n} variants: click one to inspect it.": "共 {n} 个版本：点击一个查看详情。",
+  "{gb} GB · {n} file(s)": "{gb} GB · {n} 个文件",
+  "{gb} GB · {bpw} bits per weight overall": "{gb} GB · 整体平均每个权重 {bpw} 位",
+  "Experts {b} bits": "专家 {b} 位",
+  "Strata runs it": "Strata 能运行",
+  "May run (not tested)": "可能能运行（未测试）",
+  "Not tested": "未测试",
+  "Strata cannot run it": "Strata 不能运行",
+  "This is {family} {model}, a file setup installs.": "这就是 {family} 的 {model}，setup 能直接安装的文件。",
+  "Weight group": "权重分组",
+  "Bits": "位数",
+  "Quantization types (share of bytes)": "量化类型（占字节比例）",
+  "Could not read it: {err}": "读取失败：{err}",
+  "The model manager is not reachable": "连接不上模型管理服务",
+  "Routed experts": "路由专家",
+  "Shared experts": "共享专家",
+  "Router": "路由器",
+  "Norms": "归一化层",
+  "Hyper-connections": "超连接",
+  "N-gram / per-layer embeddings": "n-gram / 逐层嵌入",
+  "Linear attention / SSM": "线性注意力 / SSM",
+  "Attention (incl. GDN qkv/gate)": "注意力（含 GDN 的 qkv/gate）",
+  "Dense FFN": "稠密 FFN",
+  "Token embedding": "词嵌入",
+  "Output head": "输出层",
+  "MTP / nextn": "MTP / nextn",
+  "Other": "其他",
+  "Models: download, switch, check": "模型：下载、切换、识别",
+  "The model manager shows which versions and sizes run on this PC, downloads them from ModelScope or Hugging Face, starts them, and tells a file's real quantization.": "模型管理页会显示这台电脑能运行哪些版本和大小，从 ModelScope（魔搭）或 Hugging Face 下载并启动，还能识别模型文件的真实量化。",
+  "Open the model manager": "打开模型管理",
+  "Install: {what}": "安装：{what}", "Start: {what}": "启动：{what}",
+  "{ram} GB of RAM holds its {experts} GB of experts only together with the graphics card: setup uses the low-RAM mode and copies the experts the card does not hold into RAM once.": "内存 {ram} GB，要和显卡一起才放得下 {experts} GB 专家：setup 会用低内存模式，把显卡放不下的专家一次性复制进内存（不从硬盘反复读取）。",
+  "The chat page belongs to the running model (http://127.0.0.1:8080/ by default): start a model below, then \"Open the chat\" appears at the top.": "对话页由运行中的模型提供（默认 http://127.0.0.1:8080/）：在下面启动一个模型后，页面顶部会出现“打开对话”按钮。",
+  "A model is already running": "已经有模型在运行",
+  "Close its window (or press Ctrl+C in it) first: the graphics card holds one model.": "请先关闭它的窗口（或在窗口里按 Ctrl+C）：显卡一次只能放一个模型。",
+  "It is the Models tab at the top. Without a running model: START-HERE.bat --web (Linux: ./setup.sh --web) opens it at http://127.0.0.1:8090/.": "就是页面顶部的“模型”标签。没有模型在运行时：运行 START-HERE.bat --web（Linux：./setup.sh --web），会在 http://127.0.0.1:8090/ 打开它。",
+  "A model is running (this page is part of it). To start another one, close this model's window first; an install can run beside it, but it takes the network, the disk and the CPU while the model answers.": "当前有模型在运行（这个页面就是它提供的）。要启动另一个模型，请先关闭当前模型的窗口；可以一边运行一边安装，但安装会占用网络、硬盘和 CPU，回答会变慢。",
+}};

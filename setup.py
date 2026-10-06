@@ -175,8 +175,13 @@ LLAMA_CPP_ZIP = f"https://github.com/ggml-org/llama.cpp/archive/{LLAMA_CPP_COMMI
 # "https://github.com/<you>/Strata/releases/latest/download/" (or pass --prebuilt / set STRATA_PREBUILT_URL).
 # With the default, the release of this checkout's own version (PREBUILT_TAG_URL, CMakeLists.txt's version) is
 # tried first and the latest release is the fallback (#214): an older checkout keeps the engine it shipped with.
-PREBUILT_URL = "https://github.com/Niko1221/Strata/releases/latest/download/"
-PREBUILT_TAG_URL = "https://github.com/Niko1221/Strata/releases/download/v{version}/"
+# This fork (branch oldhw): its own engine first - the release oldhw-v<version>, built by GitHub Actions from the
+# fork's sources (.github/workflows/oldhw-engine.yml) - then the official release of the same version and the latest
+# (UPSTREAM_*), for an engine the fork does not build (CUDA 12, AMD) or a version not built yet.
+PREBUILT_URL = "https://github.com/1872183316/Strata/releases/latest/download/"
+PREBUILT_TAG_URL = "https://github.com/1872183316/Strata/releases/download/oldhw-v{version}/"
+UPSTREAM_PREBUILT_URL = "https://github.com/Niko1221/Strata/releases/latest/download/"
+UPSTREAM_PREBUILT_TAG_URL = "https://github.com/Niko1221/Strata/releases/download/v{version}/"
 PREBUILT_ASSET = "strata-windows-x64.zip" if WIN else "strata-linux-x64.zip"
 # the CUDA libraries the ready-made engine loads (the same CUDA 13.0 it is built with), from NVIDIA's pip packages
 CUDA_WHEELS = ["nvidia-cublas==13.0.2.14", "nvidia-cuda-runtime==13.0.96"]
@@ -2072,7 +2077,8 @@ def prebuilt_bases(url_base) -> list[str]:
     base = url_base if url_base.endswith(("/", "\\")) else url_base + "/"
     if base != PREBUILT_URL:
         return [base]
-    return [PREBUILT_TAG_URL.format(version=source_version()), base]
+    v = source_version()
+    return [PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_URL]
 
 
 def get_prebuilt(url_base, gpu, vision, updating=False, toolkit=13) -> Path | None:

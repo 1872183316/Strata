@@ -181,21 +181,30 @@ class Engine(unittest.TestCase):
         return eng, out, heads, got
 
     def test_bases(self):
+        # the fork's own engine first, then the official release of the same version, then the official latest
         self.assertEqual(setup.prebuilt_bases(setup.PREBUILT_URL),
-                         ["https://github.com/Niko1221/Strata/releases/download/v0.1.31/", setup.PREBUILT_URL])
+                         ["https://github.com/1872183316/Strata/releases/download/oldhw-v0.1.31/",
+                          "https://github.com/Niko1221/Strata/releases/download/v0.1.31/", setup.UPSTREAM_PREBUILT_URL])
         self.assertEqual(setup.prebuilt_bases("https://mirror.example/x"), ["https://mirror.example/x/"])
 
-    def test_the_checkout_s_release_first(self):
-        tag = "https://github.com/Niko1221/Strata/releases/download/v0.1.31/"
-        eng, out, heads, got = self.run_get([tag, setup.PREBUILT_URL])
+    def test_the_fork_s_release_first(self):
+        tag = "https://github.com/1872183316/Strata/releases/download/oldhw-v0.1.31/"
+        eng, out, heads, got = self.run_get([tag, setup.UPSTREAM_PREBUILT_URL])
         self.assertEqual(eng, self.root / "engine")
         self.assertEqual(got, [tag + setup.PREBUILT_ASSET])
         self.assertEqual(len(heads), 1)
 
-    def test_latest_when_it_is_not_published(self):
-        eng, out, heads, got = self.run_get([setup.PREBUILT_URL])
+    def test_the_official_release_when_the_fork_has_none(self):
+        tag = "https://github.com/Niko1221/Strata/releases/download/v0.1.31/"
+        eng, out, heads, got = self.run_get([tag])
         self.assertEqual(eng, self.root / "engine")
-        self.assertEqual(got, [setup.PREBUILT_URL + setup.PREBUILT_ASSET])
+        self.assertEqual(got, [tag + setup.PREBUILT_ASSET])
+        self.assertEqual(len(heads), 2)
+
+    def test_latest_when_it_is_not_published(self):
+        eng, out, heads, got = self.run_get([setup.UPSTREAM_PREBUILT_URL])
+        self.assertEqual(eng, self.root / "engine")
+        self.assertEqual(got, [setup.UPSTREAM_PREBUILT_URL + setup.PREBUILT_ASSET])
         self.assertIn("No ready-made engine for v0.1.31", out)
 
     def test_a_refused_archive_is_not_kept(self):

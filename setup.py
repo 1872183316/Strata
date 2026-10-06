@@ -3731,6 +3731,10 @@ def main() -> int:
     ap.add_argument("--prebuilt", default=os.environ.get("STRATA_PREBUILT_URL", PREBUILT_URL),
                     help="where the ready-made engine is (a URL folder or a local folder)")
     ap.add_argument("--check", action="store_true", help="only check this PC and exit")
+    ap.add_argument("--web", nargs="?", const=8090, type=int, metavar="PORT",
+                    help="the model manager in the browser (http://127.0.0.1:8090/): this PC, every model and size "
+                         "with whether it runs here, the download source, installing and starting a model, and what "
+                         "quantization a GGUF really is (serve/setup_web.py)")
     ap.add_argument("--calibrate", action="store_true",
                     help="tune the engine's settings for this PC (about 5-10 minutes), then start the model")
     ap.add_argument("--draft-vocab", choices=list(DRAFT_VOCABS),
@@ -3763,6 +3767,10 @@ def main() -> int:
     a = ap.parse_args()
     if a.source:
         os.environ["STRATA_SOURCE"] = a.source
+    if a.web:                                          # the model manager page: it runs setup.py for each install
+        sys.path.insert(0, str(ROOT / "serve"))
+        import setup_web
+        return setup_web.main(["--port", str(a.web)] + (["--no-browser"] if a.browser is False else []))
     if a.inspect:                                      # headers only: nothing is installed
         sys.exit(subprocess.run([sys.executable, str(ROOT / "tools" / "strata_inspect.py"), *a.inspect[:2]]).returncode)
     if a.backend == "sycl":                            # Intel Arc: the SYCL port's own setup (sycl/setup_intel.py)

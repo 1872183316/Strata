@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strata - models</title>
+<link rel="stylesheet" href="web/tokens.css">
+<link rel="stylesheet" href="web/components.css">
+<link rel="stylesheet" href="web/app.css">
+<script>
+  try {
+    const t = localStorage.getItem("strata.theme") ||
+      (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body class="setup-page">
+<header class="st-header">
+  <span class="st-header__brand">Strata</span>
+  <nav class="st-tabs" id="tabs" aria-label="Views" data-i18n-attr="aria-label" hidden>
+    <span class="st-tab" aria-selected="true"><svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-layers"/></svg><span data-i18n>Models</span></span>
+    <a class="st-tab" href="./"><svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-chat"/></svg><span data-i18n>Chat</span></a>
+    <a class="st-tab" href="./#monitor"><svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-activity"/></svg><span data-i18n>Monitor</span></a>
+    <a class="st-tab" href="./#about"><svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-info"/></svg><span data-i18n>About</span></a>
+  </nav>
+  <span class="muted" id="standalone-title" data-i18n>Model manager</span>
+  <span class="st-header__spacer"></span>
+  <a class="st-btn st-btn--primary" id="open-chat" target="_blank" rel="noopener" hidden>
+    <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-chat"/></svg><span data-i18n>Open the chat</span></a>
+  <button class="st-btn st-btn--icon lang-btn" id="lang-btn" title="Switch the language" aria-label="Switch the language"
+          data-i18n-attr="title,aria-label"><span id="lang-text">中</span></button>
+  <button class="st-btn st-btn--icon" id="theme-btn" title="Light / dark" aria-label="Switch between light and dark"
+          data-i18n-attr="title,aria-label"><svg class="st-icon"><use id="theme-icon" href="web/sprite.svg#i-moon"/></svg></button>
+</header>
+
+<main class="setup">
+  <!-- this PC -->
+  <section class="st-card">
+    <div class="req-head"><span class="card-title" data-i18n>This PC</span>
+      <button class="st-btn st-btn--secondary" id="hw-refresh" type="button">
+        <svg class="st-icon st-icon--sm"><use href="web/sprite.svg#i-refresh"/></svg><span data-i18n>Check again</span></button></div>
+    <dl class="facts" id="hw"></dl>
+    <details class="st-collapse whatif">
+      <summary><span data-i18n>Check for another PC</span><svg class="st-icon st-icon--sm st-chev"><use href="web/sprite.svg#i-chevron"/></svg></summary>
+      <div class="st-collapse__body">
+        <p data-i18n>Enter another PC's RAM and VRAM to see what would run there (for example before buying or downloading).</p>
+        <div class="whatif__row">
+          <label><span data-i18n>RAM (GB)</span><input class="st-input" id="wi-ram" type="number" min="8" step="1"></label>
+          <label><span data-i18n>VRAM (GB)</span><input class="st-input" id="wi-vram" type="number" min="0" step="1"></label>
+          <button class="st-btn st-btn--secondary" id="wi-apply" type="button" data-i18n>Check</button>
+          <button class="st-btn st-btn--secondary" id="wi-reset" type="button" data-i18n>This PC</button>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- download source -->
+  <section class="st-card">
+    <div class="req-head"><span class="card-title" data-i18n>Download source</span>
+      <button class="st-btn st-btn--secondary" id="src-test" type="button" data-i18n>Test the connection</button></div>
+    <div class="sources" id="sources" role="radiogroup" aria-label="Download source" data-i18n-attr="aria-label">
+      <label class="source"><input type="radio" name="src" value="auto" checked>
+        <span><b data-i18n>Automatic (recommended)</b><span class="muted small" data-i18n>ModelScope first; Hugging Face when ModelScope does not answer</span></span>
+        <span class="st-badge" id="st-auto"></span></label>
+      <label class="source"><input type="radio" name="src" value="modelscope">
+        <span><b data-i18n>ModelScope</b><span class="muted small" data-i18n>modelscope.cn, fast in mainland China; every file is checked against its published SHA-256</span></span>
+        <span class="st-badge" id="st-modelscope"></span></label>
+      <label class="source"><input type="radio" name="src" value="huggingface">
+        <span><b data-i18n>Hugging Face</b><span class="muted small" data-i18n>huggingface.co (or HF_ENDPOINT, e.g. a mirror)</span></span>
+        <span class="st-badge" id="st-huggingface"></span></label>
+    </div>
+  </section>
+
+  <!-- the models -->
+  <section class="st-card">
+    <div class="req-head"><span class="card-title" data-i18n>Models</span><span class="muted small" id="models-note"></span></div>
+    <p class="muted small" id="note-standalone" data-i18n>The chat page belongs to the running model (http://127.0.0.1:8080/ by default): start a model below, then "Open the chat" appears at the top.</p>
+    <p class="muted small" id="note-embedded" hidden data-i18n>A model is running (this page is part of it). To start another one, close this model's window first; an install can run beside it, but it takes the network, the disk and the CPU while the model answers.</p>
+    <p class="muted small" data-i18n>Strata runs one model, Qwen3.8-Flash-Next (125B parameters, mixture of experts), in several versions and sizes. Which size fits depends mostly on your RAM; a bigger graphics card makes it faster.</p>
+    <div class="legend muted small"><span class="st-badge st-badge--generating" data-i18n>Runs well</span>
+      <span class="st-badge st-badge--queued" data-i18n>Runs, slower</span><span class="st-badge st-badge--error" data-i18n>Will not run</span>
+      <span data-i18n>Bits: the real bits per weight of the experts (most of the file), read from the files.</span></div>
+    <div id="models"></div>
+  </section>
+
+  <!-- the running install / start -->
+  <section class="st-card" id="job-card" hidden>
+    <div class="req-head"><span class="card-title" id="job-title"></span>
+      <button class="st-btn st-btn--secondary" id="job-stop" type="button" data-i18n>Stop</button></div>
+    <div class="job-status" id="job-status"></div>
+    <div class="job-progress" id="job-progress"></div>
+    <pre class="job-log" id="job-log"></pre>
+  </section>
+
+  <!-- inspect a GGUF -->
+  <section class="st-card">
+    <span class="card-title" data-i18n>Which quantization is this file?</span>
+    <p class="muted small" data-i18n>Reads only the headers (a few MB, nothing is downloaded): the real bits of every weight group, whether it is Q2, Q3 or Q4 class, and whether Strata runs it. A file's name does not always say it.</p>
+    <div class="inspect__row">
+      <input class="st-input" id="in-source" placeholder="ms:owner/repo, hf:owner/repo, a URL, a .gguf file or a folder" autocomplete="off"
+             data-i18n-attr="placeholder">
+      <input class="st-input inspect__variant" id="in-variant" placeholder="Variant (optional)" autocomplete="off" data-i18n-attr="placeholder">
+      <button class="st-btn st-btn--primary" id="in-go" type="button" data-i18n>Inspect</button>
+    </div>
+    <div class="examples muted small"><span data-i18n>Examples:</span>
+      <button type="button" class="link" data-ex="ms:ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF">ISTA-DASLab (ModelScope)</button>
+      <button type="button" class="link" data-ex="ms:unsloth/Qwen3.8-Flash-Next-GGUF">Unsloth (ModelScope)</button>
+      <button type="button" class="link" data-ex="ms:ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF|IQ1_M">Coder IQ1_M</button></div>
+    <div id="inspect"></div>
+  </section>
+</main>
+<div class="st-toasts" id="toasts" aria-live="polite"></div>
+<script src="web/i18n.js"></script>
+<script src="web/setup.js"></script>
+</body>
+</html>

@@ -1601,6 +1601,26 @@ class WebApp(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, e.headers.get("Content-Type", ""), e.read()
 
+    def test_models_tab(self):
+        """The Models tab: serve/setup_web.py's model manager at /manage, its API under the server's own rules."""
+        code, ctype, body = self.get("/manage")
+        self.assertEqual(code, 200)
+        self.assertIn(b"\"web/setup.js\"", body)
+        code, _, body = self.get("/manage/api/context")
+        self.assertEqual((code, json.loads(body)), (200, {"embedded": True}))
+        for headers, want in (({"Content-Type": "text/plain"}, 415),
+                              ({"Content-Type": "application/json", "Origin": "http://evil.example"}, 403)):
+            with self.subTest(headers=headers):
+                req = urllib.request.Request(self.base + "/manage/api/install", data=b"{}", headers=headers, method="POST")
+                with self.assertRaises(urllib.error.HTTPError) as cm:
+                    urllib.request.urlopen(req, timeout=10)
+                self.assertEqual(cm.exception.code, want)
+        req = urllib.request.Request(self.base + "/manage/api/install", data=b'{"family": "qwen", "model": "Q9"}',
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with self.assertRaises(urllib.error.HTTPError) as cm:      # its own page: checked, refused as a bad size
+            urllib.request.urlopen(req, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+
     def test_page_and_files(self):
         code, ctype, body = self.get("/")
         self.assertEqual(code, 200)

@@ -3020,6 +3020,19 @@ def make_handler(svc: Service):
                 if self._authorized():
                     self._json(200, svc.mcp.status() if svc.mcp else {"servers": [], "tools": 0})
                 return
+            if path == "/manage" or path.startswith("/manage/api/"):
+                # the web app's Models tab: serve/setup_web.py's model manager (this PC, the sizes that run here,
+                # the download source, installs by setup.py, what a GGUF's quantization really is)
+                if path == "/manage":
+                    body = (ROOT / "serve" / "web" / "setup.html").read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                elif self._authorized():
+                    self._json(*manager().api("GET", self.path, None, embedded=True))
+                return
             if path == "" or (path == "/api-monitor" and svc.api_monitor):
                 body = (ROOT / "serve" / "web" / ("monitor.html" if path else "index.html")).read_bytes()
                 self.send_response(200)
@@ -3086,6 +3099,11 @@ def make_handler(svc: Service):
                 return
             if path == "/config":
                 self._config_post()
+                return
+            if path.startswith("/manage/api/"):                # the Models tab: JSON from Strata's own page only
+                body = self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 65536))
+                if self._own_page("models can be installed or started"):
+                    self._json(*manager().api("POST", self.path, body, embedded=True))
                 return
             if path in ("/unload", "/load") and not self._control_body():
                 return
@@ -3893,6 +3911,12 @@ def sampling_defaults_from_config(cfg: dict) -> dict:
         else:
             print(f"[strata] config sampling.{key}={value!r}: unknown key, ignored", flush=True)
     return out
+
+
+def manager():
+    """serve/setup_web.py, imported when the Models tab is first used (it loads setup.py's tables)."""
+    from serve import setup_web
+    return setup_web
 
 
 def main() -> int:

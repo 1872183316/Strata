@@ -1193,6 +1193,10 @@ def download(url, dst: Path, what=None):
                     f.seek(0)
                     f.truncate()
                     have = 0
+                if not total:                                    # ModelScope answers HEAD without a length:
+                    m = re.match(r"bytes \d+-\d+/(\d+)$", r.headers.get("Content-Range") or "")   # the GET has it
+                    total = int(m.group(1)) if m else (have + int(r.headers.get("Content-Length") or 0)
+                                                      if r.headers.get("Content-Length") else 0)
                 last = 0.0
                 while True:
                     b = r.read(8 << 20)

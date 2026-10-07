@@ -10,6 +10,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -135,6 +136,52 @@ class Download(Base):
                 mock.patch.object(setup.time, "sleep"), self.assertRaises(SystemExit):
             setup.download(HF_URL, self.dst)
         self.assertTrue(calls and all(u == HF_URL for u in calls), calls[:2])
+
+
+class NoLengthOnHead(Download):
+    """ModelScope's file links answer HEAD without a Content-Length (measured 2026-10-07); the size is in the GET's
+    Content-Range.  A transfer cut short must be resumed, not taken for the whole file."""
+
+    def setUp(self):
+        super().setUp()
+        data, gets = self.data, []
+        self.gets = gets
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_HEAD(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def do_GET(self):
+                start = int(re.match(r"bytes=(\d+)-", self.headers.get("Range", "bytes=0-")).group(1))
+                gets.append(start)
+                part = data[start:] if len(gets) > 1 else data[start:start + len(data) // 2]   # the first one is cut
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {start}-{len(data) - 1}/{len(data)}")
+                self.send_header("Content-Length", str(len(part)))
+                self.end_headers()
+                self.wfile.write(part)
+
+        self.server.shutdown()
+        self.server.server_close()
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        os.environ["MODELSCOPE_ENDPOINT"] = "http://127.0.0.1:%d" % self.server.server_address[1]
+
+    def test_a_cut_transfer_is_resumed(self):
+        with mock.patch.object(setup, "reachable", return_value=True), mock.patch.object(setup, "ms_meta",
+                                                                                          return_value=None),                 mock.patch.object(setup, "say"):
+            setup.download(HF_URL, self.dst)
+        self.assertEqual(self.dst.read_bytes(), self.data)
+        self.assertEqual(self.gets, [0, len(self.data) // 2])
+
+    test_right_hash_is_kept = test_wrong_hash_is_deleted = test_no_hash_published = None
+    test_falls_back_when_modelscope_is_silent = None
 
 
 if __name__ == "__main__":

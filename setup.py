@@ -182,6 +182,10 @@ PREBUILT_URL = "https://github.com/1872183316/Strata/releases/latest/download/"
 PREBUILT_TAG_URL = "https://github.com/1872183316/Strata/releases/download/oldhw-v{version}/"
 UPSTREAM_PREBUILT_URL = "https://github.com/Niko1221/Strata/releases/latest/download/"
 UPSTREAM_PREBUILT_TAG_URL = "https://github.com/Niko1221/Strata/releases/download/v{version}/"
+# A copy of the fork's release on ModelScope (tools/ci_package.py modelscope), for PCs that reach ModelScope but not
+# GitHub's downloads (mainland China): tried first when model_source() is ModelScope, else right after GitHub.  The
+# archive is checked against the SHA-256 ModelScope publishes for it.
+MS_ENGINE_REPO = "1872183316/Strata-oldhw-engine"
 PREBUILT_ASSET = "strata-windows-x64.zip" if WIN else "strata-linux-x64.zip"
 # the CUDA libraries the ready-made engine loads (the same CUDA 13.0 it is built with), from NVIDIA's pip packages
 CUDA_WHEELS = ["nvidia-cublas==13.0.2.14", "nvidia-cuda-runtime==13.0.96"]
@@ -2082,7 +2086,31 @@ def prebuilt_bases(url_base) -> list[str]:
     if base != PREBUILT_URL:
         return [base]
     v = source_version()
-    return [PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_URL]
+    gh = [PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_TAG_URL.format(version=v), UPSTREAM_PREBUILT_URL]
+    return [ms_engine_base(v)] + gh if model_source() == "modelscope" else gh[:1] + [ms_engine_base(v)] + gh[1:]
+
+
+def ms_engine_base(version: str) -> str:
+    return ms_url(MS_ENGINE_REPO, f"oldhw-v{version}/")
+
+
+def ms_engine_ok(base: str, z: Path) -> bool:
+    """False when `z` came from the ModelScope copy and its SHA-256 is not the one ModelScope publishes for it."""
+    if not base.startswith(ms_url(MS_ENGINE_REPO, "")):
+        return True
+    path = base[len(ms_url(MS_ENGINE_REPO, "")):] + z.name
+    meta = ms_meta(MS_ENGINE_REPO, path)
+    if not meta or not meta[1]:
+        warn(f"ModelScope publishes no SHA-256 for {path}: the engine is not checked")
+        return True
+    h = hashlib.sha256()
+    with open(z, "rb") as f:
+        for b in iter(lambda: f.read(8 << 20), b""):
+            h.update(b)
+    if h.hexdigest() == meta[1]:
+        return True
+    warn(f"the engine from ModelScope does not match its SHA-256 ({path}): not used")
+    return False
 
 
 def get_prebuilt(url_base, gpu, vision, updating=False, toolkit=13) -> Path | None:
@@ -2123,12 +2151,15 @@ def get_prebuilt(url_base, gpu, vision, updating=False, toolkit=13) -> Path | No
             break
         except OSError as e:
             if i + 1 < len(bases):                     # #214: this checkout's release is not published (yet)
-                say(f"  No ready-made engine for v{source_version()} ({e}): the latest release instead")
+                say(f"  No ready-made engine for v{source_version()} at {base} ({e}): trying {bases[i + 1]}")
                 continue
             warn(f"no ready-made engine at {base} ({e})" + ("" if updating else ": compiling instead"))
             return None
     say("  Downloading the ready-made Strata engine" + (" (CUDA 12, experimental)" if int(toolkit) == 12 else "") + " ...")
     download(base + asset, z, "Strata engine")
+    if not ms_engine_ok(base, z):
+        drop_archive(z)
+        return None
     tmp = eng / "_unpack"
     shutil.rmtree(tmp, ignore_errors=True)
     with zipfile.ZipFile(z) as f:

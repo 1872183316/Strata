@@ -1,6 +1,6 @@
 # The ready-made engine of this fork (branch oldhw): the same build as the official release (STRATA_PORTABLE, CUDA 13.0,
 # RTX 20/30/40/50) from this fork's sources, for Windows and Linux.  setup.py downloads it from the release
-# oldhw-v<version> (PREBUILT_TAG_URL), so the fork's engine changes reach PCs without a compiler.
+# oldhw-v<version> (PREBUILT_TAG_URL; a copy on ModelScope, MS_ENGINE_REPO), so the fork's engine changes reach PCs without a compiler.
 # Building needs no GPU; the engine is not run here.
 name: engine (oldhw)
 
@@ -98,3 +98,11 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG (engine, oldhw)" --notes "$NOTES"
           gh release edit "$TAG" --notes "$NOTES"
           gh release upload "$TAG" dist/*.zip --clobber
+      # the same archives on ModelScope for mainland China (setup.py tries it first there); skipped without the token
+      - name: copy on ModelScope
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          MODELSCOPE_REPO: ${{ vars.MODELSCOPE_REPO }}
+        run: |
+          python3 -m pip install "modelscope-hub==0.4.5"
+          python3 tools/ci_package.py modelscope dist/*.zip

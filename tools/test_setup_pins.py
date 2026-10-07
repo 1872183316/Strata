@@ -149,7 +149,8 @@ class Engine(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "engine").mkdir()
         self.patches = [mock.patch.object(setup, "ROOT", self.root),
-                        mock.patch.object(setup, "source_version", lambda: "0.1.31")]
+                        mock.patch.object(setup, "source_version", lambda: "0.1.31"),
+                        mock.patch.object(setup, "model_source", lambda: "huggingface")]
         for p in self.patches:
             p.start()
 
@@ -180,12 +181,36 @@ class Engine(unittest.TestCase):
             eng, out = quiet(setup.get_prebuilt, setup.PREBUILT_URL, {"arch": 89}, "gpu")
         return eng, out, heads, got
 
+    MS = "https://www.modelscope.cn/models/1872183316/Strata-oldhw-engine/resolve/master/oldhw-v0.1.31/"
+
     def test_bases(self):
-        # the fork's own engine first, then the official release of the same version, then the official latest
-        self.assertEqual(setup.prebuilt_bases(setup.PREBUILT_URL),
-                         ["https://github.com/1872183316/Strata/releases/download/oldhw-v0.1.31/",
-                          "https://github.com/Niko1221/Strata/releases/download/v0.1.31/", setup.UPSTREAM_PREBUILT_URL])
+        # the fork's own engine first (its ModelScope copy next), then the official release of the same version,
+        # then the official latest
+        gh = ["https://github.com/1872183316/Strata/releases/download/oldhw-v0.1.31/",
+              "https://github.com/Niko1221/Strata/releases/download/v0.1.31/", setup.UPSTREAM_PREBUILT_URL]
+        self.assertEqual(setup.prebuilt_bases(setup.PREBUILT_URL), gh[:1] + [self.MS] + gh[1:])
+        # mainland China: the ModelScope copy first
+        with mock.patch.object(setup, "model_source", lambda: "modelscope"):
+            self.assertEqual(setup.prebuilt_bases(setup.PREBUILT_URL), [self.MS] + gh)
         self.assertEqual(setup.prebuilt_bases("https://mirror.example/x"), ["https://mirror.example/x/"])
+
+    def test_the_modelscope_copy_is_checked(self):
+        def zip_sha():
+            z = self.root / "engine" / setup.PREBUILT_ASSET
+            self.fake_download([])(None, z)
+            return setup.hashlib.sha256(z.read_bytes()).hexdigest()
+
+        good = zip_sha()
+        for sha, used in ((good, True), ("0" * 64, False)):
+            with self.subTest(used=used):
+                (self.root / "engine" / "BUILD.json").unlink(missing_ok=True)
+                got = []
+                with mock.patch.object(setup, "model_source", lambda: "modelscope"),                         mock.patch.object(setup, "ms_meta", lambda repo, path: (1, sha)),                         mock.patch.object(setup.urllib.request, "urlopen", lambda req, timeout=None: Response()),                         mock.patch.object(setup, "download", self.fake_download(got)):
+                    eng, out = quiet(setup.get_prebuilt, setup.PREBUILT_URL, {"arch": 89}, "gpu")
+                self.assertEqual(got, [self.MS + setup.PREBUILT_ASSET])
+                self.assertEqual(eng, self.root / "engine" if used else None)
+                if not used:
+                    self.assertIn("does not match its SHA-256", out)
 
     def test_the_fork_s_release_first(self):
         tag = "https://github.com/1872183316/Strata/releases/download/oldhw-v0.1.31/"
@@ -199,7 +224,7 @@ class Engine(unittest.TestCase):
         eng, out, heads, got = self.run_get([tag])
         self.assertEqual(eng, self.root / "engine")
         self.assertEqual(got, [tag + setup.PREBUILT_ASSET])
-        self.assertEqual(len(heads), 2)
+        self.assertEqual(len(heads), 3)                # the fork's release and its ModelScope copy first
 
     def test_latest_when_it_is_not_published(self):
         eng, out, heads, got = self.run_get([setup.UPSTREAM_PREBUILT_URL])

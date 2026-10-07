@@ -181,7 +181,7 @@ class Engine(unittest.TestCase):
             eng, out = quiet(setup.get_prebuilt, setup.PREBUILT_URL, {"arch": 89}, "gpu")
         return eng, out, heads, got
 
-    MS = "https://www.modelscope.cn/models/1872183316/Strata-oldhw-engine/resolve/master/oldhw-v0.1.31/"
+    MS = "https://www.modelscope.cn/models/mymodel3861/Strata-oldhw-engine/resolve/master/oldhw-v0.1.31/"
 
     def test_bases(self):
         # the fork's own engine first (its ModelScope copy next), then the official release of the same version,

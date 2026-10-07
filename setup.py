@@ -185,7 +185,7 @@ UPSTREAM_PREBUILT_TAG_URL = "https://github.com/Niko1221/Strata/releases/downloa
 # A copy of the fork's release on ModelScope (tools/ci_package.py modelscope), for PCs that reach ModelScope but not
 # GitHub's downloads (mainland China): tried first when model_source() is ModelScope, else right after GitHub.  The
 # archive is checked against the SHA-256 ModelScope publishes for it.
-MS_ENGINE_REPO = "1872183316/Strata-oldhw-engine"
+MS_ENGINE_REPO = "mymodel3861/Strata-oldhw-engine"
 PREBUILT_ASSET = "strata-windows-x64.zip" if WIN else "strata-linux-x64.zip"
 # the CUDA libraries the ready-made engine loads (the same CUDA 13.0 it is built with), from NVIDIA's pip packages
 CUDA_WHEELS = ["nvidia-cublas==13.0.2.14", "nvidia-cuda-runtime==13.0.96"]

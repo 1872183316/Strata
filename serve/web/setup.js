@@ -161,6 +161,9 @@ $("models").addEventListener("click", async (e) => {
     if (whatIf) { toast("warn", t("Showing another PC"), t("Switch back to this PC before installing.")); return; }
     if (m.fit.level === "no" && !confirm(t("This PC does not meet the requirements for {model}: after the download the model will not start.\n\nDownload anyway?", {model: m.model}))) return;
     if (m.fit.level === "slow" && !confirm(t("{model} will run on this PC, but slower:\n\n{why}\n\nDownload it ({gb} GB)?", {model: m.model, gb: fmt(m.download_gb, 1), why: m.fit.reasons.filter((r) => r.level === "slow").map(reasonText).join("\n")}))) return;
+    // setup stops before downloading when the models folder is short (it counts a download it resumes): ask first
+    const disk = m.fit.reasons.find((r) => r.code === "disk");
+    if (disk && !confirm(t("Not enough free disk space for {model}: about {need} GB is needed, the model folder has {free} GB. The install will most likely stop at its disk check.\n\nTry anyway?", {model: m.model, need: disk.need, free: fmt(disk.free, 0)}))) return;
     try {
       await api("api/install", {family: m.family, model: m.model, source: pickSource()});
       pollJobs();

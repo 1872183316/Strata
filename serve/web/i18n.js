@@ -272,6 +272,7 @@ const STRINGS = {"zh-CN": {
   "{ram} GB of RAM: part of its {experts} GB of experts is read from the SSD while it answers (about {need} GB of RAM holds them all).": "内存 {ram} GB：{experts} GB 专家中有一部分要在回答时从硬盘读取（约 {need} GB 内存才能全部放下）。",
   "{ram} GB of RAM is less than its {experts} GB of experts + 10 GB: the low-RAM mode reads experts from the SSD, much slower (about {need} GB of RAM runs it normally).": "内存 {ram} GB，不够放下 {experts} GB 专家再留 10 GB：会用低内存模式从硬盘读专家，慢很多（约 {need} GB 内存才能正常运行）。",
   "{ram} GB of RAM: it needs about {need} GB. The model will not start.": "内存 {ram} GB：需要约 {need} GB。模型无法启动。",
+  "Not enough free disk space for {model}: about {need} GB is needed, the model folder has {free} GB. The install will most likely stop at its disk check.\n\nTry anyway?": "{model} 需要约 {need} GB 硬盘空间，模型目录只剩 {free} GB，安装很可能在检查硬盘这一步停下。\n\n仍然要试吗？",
   "Only {free} GB free in the model folder; the download needs about {need} GB (choose another folder with --data-dir).": "模型目录只剩 {free} GB 空间，需要约 {need} GB（可以用 --data-dir 换到空间更大的硬盘）。",
   "Showing another PC": "正在显示另一台电脑的评估",
   "Switch back to this PC before installing.": "请先切换回“本机”再安装。",

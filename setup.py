@@ -1232,6 +1232,15 @@ def download(url, dst: Path, what=None):
     ok(f"{what or dst.name} downloaded")
 
 
+def disk_need_gb(family, model, avx512, vision="none", low_ram=False, to_fetch=None) -> float:
+    """The free space (GB) an install of this size asks for in the models folder: what is still to download, 8 GB
+    more, the AVX-512 Q2_0 pack (40), the image encoder (1) and the low-RAM mode's expert file.  Also the web model
+    manager's disk warning (serve/setup_web.py), so the page and the install agree."""
+    pack = model == "Q2_0" and avx512 and family == "qwen"
+    return (MODELS[model]["download_gb"] if to_fetch is None else to_fetch) + 8 + (40 if pack else 0) + \
+        (1 if vision != "none" else 0) + (MODELS[model]["arena_gb"] + 1 if low_ram and not pack else 0)
+
+
 def whole_shard(s: Path) -> bool:
     """A shard as long as its own tensor directory says (check_shards' test, without stopping setup)."""
     sys.path.insert(0, str(ROOT / "tools"))
@@ -4279,9 +4288,7 @@ def main() -> int:
     # the .part files already on the disk count
     on_disk = sum(f.stat().st_size for s in shards for f in (s, s.with_name(s.name + ".part")) if f.is_file()) / 1e9
     to_fetch = 0 if a.gguf_dir or have_model else max(MODELS[model]["download_gb"] - on_disk, 0)
-    need = to_fetch + 8 + \
-        (40 if model == "Q2_0" and avx512 and family == "qwen" else 0) + (1 if vision != "none" else 0) + \
-        (MODELS[model]["arena_gb"] + 1 if low_ram and not (model == "Q2_0" and avx512 and family == "qwen") else 0)
+    need = disk_need_gb(family, model, avx512, vision, low_ram, to_fetch)
     if free_gb(models_dir) < need:
         fail(f"not enough free disk space in {models_dir}: need ~{need:.0f} GB" +
              (f" ({on_disk:.0f} GB of the model is already there)" if on_disk >= 1 and not have_model else ""),

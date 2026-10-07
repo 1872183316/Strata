@@ -69,7 +69,8 @@ def detect() -> dict:
 
 
 # ------------------------------------------------------------------------------------------------ will it run here
-def fit(family: str, model: str, ram: float, vram: float, gpu_ok: bool, amd: bool, free: float | None) -> dict:
+def fit(family: str, model: str, ram: float, vram: float, gpu_ok: bool, amd: bool, free: float | None,
+        avx512: bool = False) -> dict:
     """Whether a size runs on a PC with this RAM and GPU, by setup's rules: "ok", "slow" (it runs, but slower: a
     small card, the low-RAM mode, experts read from the SSD) or "no" (it will not start).  Each reason is a code and
     its numbers; the page words them."""
@@ -108,7 +109,7 @@ def fit(family: str, model: str, ram: float, vram: float, gpu_ok: bool, amd: boo
     else:
         worse("no", "ram_short", ram=ram, need=round(arena + headroom))
     if free is not None:
-        need = m["download_gb"] + 8
+        need = S.disk_need_gb(family, model, avx512, low_ram=not m.get("budget") and S.low_ram_needed(model, ram))
         if free < need:                                # another folder fixes it: a warning, not the verdict
             reasons.append({"code": "disk", "level": "warn", "free": free, "need": round(need)})
     if m.get("experimental"):
@@ -138,7 +139,7 @@ def catalog(hw: dict, ram: float | None = None, vram: float | None = None) -> li
                         "experts_gb": m["arena_gb"], "expert_bits": bits,
                         "class": QS.q_class(bits) if bits else None,
                         "experimental": bool(m.get("experimental")), "installed": f"{fam}/{model}" in have,
-                        "fit": fit(fam, model, ram, vram, gpu_ok, amd, hw["free_gb"])})
+                        "fit": fit(fam, model, ram, vram, gpu_ok, amd, hw["free_gb"], bool(hw.get("avx512")))})
     return out
 
 

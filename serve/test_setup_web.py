@@ -71,6 +71,15 @@ class Fit(unittest.TestCase):
         self.assertEqual(v["level"], "ok")
         self.assertIn("disk", self.codes(v))
 
+    def test_disk_rule_is_setup_s(self):
+        # 2026-10-07, a Windows PC with 65 GB free: the page said nothing against the Coder (58.4 GB), setup stopped
+        # ("need ~66 GB").  The page now asks setup's own rule, the AVX-512 Q2_0 pack included.
+        codes = lambda *a, **k: self.codes(W.fit(*a, **k))                      # noqa: E731
+        self.assertIn("disk", codes("coder", "IQ1_M", 64, 24, True, False, 65))
+        self.assertNotIn("disk", codes("coder", "IQ1_M", 64, 24, True, False, 67))
+        self.assertNotIn("disk", codes("qwen", "Q2_0", 64, 24, True, False, 80))
+        self.assertIn("disk", codes("qwen", "Q2_0", 64, 24, True, False, 80, avx512=True))
+
     def test_catalog_has_every_family_size(self):
         hw = {"ram_gb": 64, "gpus": [{"vram_gb": 16, "vendor": "nvidia", "problem": None}], "free_gb": 500}
         keys = {f"{m['family']}/{m['model']}" for m in W.catalog(hw)}
